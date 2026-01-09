@@ -7,10 +7,12 @@ import Image from "next/image";
 
 interface ListeningNavbarProps {
   timeLeft?: number;
+  questions?: string;
 }
 
 export default function ListeningNavbar({
   timeLeft = 0,
+  questions,
 }: ListeningNavbarProps) {
   const [scrolled, setScrolled] = useState(false);
 
@@ -32,7 +34,7 @@ export default function ListeningNavbar({
   return (
     <nav
       className={`fixed top-0 left-0 right-0 z-50 flex justify-center transition-all duration-300 pointer-events-none ${
-        scrolled ? "py-2 md:py-4" : "py-4 md:py-6"
+        scrolled ? "py-2" : "py-4"
       }`}
     >
       <div className="w-[95%] md:w-full md:max-w-5xl lg:max-w-7xl rounded-2xl pointer-events-auto">
@@ -62,6 +64,15 @@ export default function ListeningNavbar({
             <div className="h-8 bg-slate-300 w-[2px]"></div>
             <p className="text-sm text-gray-700 font-semibold">Listening</p>
           </div>
+
+          {/* --- Questions Display --- */}
+          {questions && (
+            <div className="hidden md:flex items-center gap-2 px-6 py-2 rounded-lg bg-blue-50 border border-blue-200">
+              <span className="text-sm font-semibold text-gray-900">
+                Questions {questions}
+              </span>
+            </div>
+          )}
 
           {/* --- CTA & Mobile Toggle --- */}
           <div className="flex items-center gap-6">

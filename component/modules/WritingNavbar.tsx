@@ -30,7 +30,7 @@ export default function WritingNavbar({ timeLeft = 0 }: WritingNavbarProps) {
   return (
     <nav
       className={`fixed top-0 left-0 right-0 z-50 flex justify-center transition-all duration-300 pointer-events-none ${
-        scrolled ? "py-2 md:py-4" : "py-4 md:py-6"
+        scrolled ? "py-2" : "py-4"
       }`}
     >
       <div className="w-[95%] md:w-full md:max-w-5xl lg:max-w-7xl rounded-2xl pointer-events-auto">

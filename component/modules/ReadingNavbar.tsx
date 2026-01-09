@@ -7,9 +7,13 @@ import Image from "next/image";
 
 interface ReadingNavbarProps {
   timeLeft?: number;
+  questions?: string;
 }
 
-export default function ReadingNavbar({ timeLeft = 0 }: ReadingNavbarProps) {
+export default function ReadingNavbar({
+  timeLeft = 0,
+  questions,
+}: ReadingNavbarProps) {
   const [scrolled, setScrolled] = useState(false);
 
   const formatTime = (seconds: number) => {
@@ -30,7 +34,7 @@ export default function ReadingNavbar({ timeLeft = 0 }: ReadingNavbarProps) {
   return (
     <nav
       className={`fixed top-0 left-0 right-0 z-50 flex justify-center transition-all duration-300 pointer-events-none ${
-        scrolled ? "py-2 md:py-4" : "py-4 md:py-6"
+        scrolled ? "py-2" : "py-4"
       }`}
     >
       <div className="w-[95%] md:w-full md:max-w-5xl lg:max-w-7xl rounded-2xl pointer-events-auto">
@@ -60,6 +64,15 @@ export default function ReadingNavbar({ timeLeft = 0 }: ReadingNavbarProps) {
             <div className="h-8 bg-slate-300 w-[2px]"></div>
             <p className="text-sm text-gray-700 font-semibold">Reading</p>
           </div>
+
+          {/* --- Questions Display --- */}
+          {questions && (
+            <div className="hidden md:flex items-center gap-2 px-6 py-2 rounded-lg bg-green-50 border border-green-200">
+              <span className="text-sm font-semibold text-gray-900">
+                Questions {questions}
+              </span>
+            </div>
+          )}
 
           {/* --- CTA & Mobile Toggle --- */}
           <div className="flex items-center gap-6">
