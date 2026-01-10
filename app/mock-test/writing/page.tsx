@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PenTool } from "lucide-react";
 import WritingNavbar from "@/component/modules/WritingNavbar";
+import { writingModuleData } from "@/dummy/writing";
 
 export default function WritingTestPage() {
   const router = useRouter();
@@ -11,26 +12,23 @@ export default function WritingTestPage() {
   const [timeLeft, setTimeLeft] = useState(60 * 60); // 60 minutes in seconds
   const [isStarted, setIsStarted] = useState(false);
   const [currentTask, setCurrentTask] = useState(1);
-  const [task1Answer, setTask1Answer] = useState("");
-  const [task2Answer, setTask2Answer] = useState("");
   const [selectedTask, setSelectedTask] = useState<number | null>(1);
+  const [answers, setAnswers] = useState<Record<string, string>>({
+    "task-1": "",
+    "task-2": "",
+  });
 
-  const tasks = [
-    {
-      id: 1,
-      title: "Task 1",
-      description: "Describe visual information (graph, table, chart)",
-      minWords: 150,
-      time: "20 minutes",
-    },
-    {
-      id: 2,
-      title: "Task 2",
-      description: "Present an argument or discuss a problem",
-      minWords: 250,
-      time: "40 minutes",
-    },
-  ];
+  const tasks = writingModuleData.tasks.map((task, idx) => ({
+    id: idx + 1,
+    task_id: task.task_id,
+    title: task.title,
+    description:
+      task.task_id === "task-1"
+        ? "Describe visual information (graph, table, chart)"
+        : "Present an argument or discuss a problem",
+    minWords: task.word_count_min,
+    time: `${task.duration_recommendation} minutes`,
+  }));
 
   useEffect(() => {
     const authenticated = sessionStorage.getItem("authenticated");
@@ -60,14 +58,6 @@ export default function WritingTestPage() {
     return () => clearInterval(timer);
   }, [isStarted, timeLeft]);
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, "0")}:${secs
-      .toString()
-      .padStart(2, "0")}`;
-  };
-
   const countWords = (text: string) => {
     return text
       .trim()
@@ -75,8 +65,11 @@ export default function WritingTestPage() {
       .filter((word) => word.length > 0).length;
   };
 
-  const handleStartTest = () => {
-    setIsStarted(true);
+  const handleAnswerChange = (taskId: string, value: string) => {
+    setAnswers((prev) => ({
+      ...prev,
+      [taskId]: value,
+    }));
   };
 
   const handleSubmitTest = () => {
@@ -162,139 +155,153 @@ export default function WritingTestPage() {
     );
   }
 
+  const currentTaskData = writingModuleData.tasks[currentTask - 1];
+
   return (
     <div className="min-h-screen bg-white">
       <WritingNavbar timeLeft={timeLeft} />
 
       {/* Main Test Area - Scrollable */}
-      <main className="mx-auto max-w-7xl pt-28 px-6 py-8 pb-20">
-        {currentTask === 1 ? (
-          <div className="grid gap-8 lg:grid-cols-2">
-            {/* Task Description */}
-            <div className="rounded-2xl bg-white p-4">
-              <h2 className="mb-4 text-lg font-semibold text-gray-900">
-                Task 1
+      <main className="mx-auto max-w-7xl px-4 pt-28">
+        <div className="grid gap-8 lg:grid-cols-2">
+          {/* Task Prompt Section */}
+          <div className="flex h-[calc(100vh-200px)] flex-col rounded-md bg-white shadow-sm border border-gray-100">
+            <div className="border-b border-gray-200 px-4 py-2">
+              <h2 className="mb-2 text-sm font-bold text-gray-900">
+                {currentTaskData.title}
               </h2>
-              <p className="mb-6 text-sm text-gray-600">
-                Describe visual information (graph, table, chart).
-              </p>
-              <div className="rounded-lg bg-gray-100 p-6">
-                <p className="mb-4 text-sm font-semibold text-gray-900">
-                  The chart shows household electronic device ownership.
-                </p>
-                <div className="flex h-48 items-center justify-center rounded-lg bg-zinc-200">
-                  <p className="text-sm text-gray-500">
-                    [Chart/Graph would appear here]
-                  </p>
-                </div>
-              </div>
             </div>
-
-            {/* Answer Area */}
-            <div className="rounded-2xl bg-white p-4">
-              <div className="text-sm text-end mb-1">
-                <span
-                  className={
-                    countWords(task1Answer) >= 150
-                      ? "text-green-600 "
-                      : "text-gray-600 "
-                  }
-                >
-                  {countWords(task1Answer)} words
-                </span>
-                <span className="text-gray-500"> / 150 minimum</span>
+            <div className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-gray-200">
+              <div className="space-y-3">
+                {currentTaskData.render_blocks.map((block, idx) => (
+                  <RenderBlock key={idx} block={block} />
+                ))}
               </div>
-              <textarea
-                value={task1Answer}
-                onChange={(e) => setTask1Answer(e.target.value)}
-                className="min-h-[400px] w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 focus:border-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-400"
-                placeholder="Type your answer here..."
-              />
             </div>
           </div>
-        ) : (
-          <div className="grid gap-8 lg:grid-cols-2">
-            {/* Task Description */}
-            <div className="rounded-2xl bg-white p-4">
-              <h2 className="mb-4 text-lg font-semibold text-gray-900">
-                Task 2
-              </h2>
-              <p className="mb-6 text-sm text-gray-600">
-                Present an argument or discuss a problem.
-              </p>
-              <div className="rounded-lg bg-gray-100 p-6">
-                <p className="text-sm text-gray-900 mb-4">
-                  Some people believe that technology has made our lives more
-                  complicated, while others argue that it has made life easier
-                  and more convenient.
-                </p>
-                <p className="text-sm font-semibold text-gray-900">
-                  Discuss both views and give your own opinion.
-                </p>
-              </div>
-            </div>
 
-            {/* Answer Area */}
-            <div className="rounded-2xl bg-white p-4">
-              <div className="text-sm text-end mb-1">
-                <span
-                  className={
-                    countWords(task2Answer) >= 250
-                      ? "text-green-600 "
-                      : "text-gray-600 "
-                  }
-                >
-                  {countWords(task2Answer)} words
-                </span>
-                <span className="text-gray-500"> / 250 minimum</span>
-              </div>
-              <textarea
-                value={task2Answer}
-                onChange={(e) => setTask2Answer(e.target.value)}
-                className="min-h-[400px] w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 focus:border-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-400"
-                placeholder="Type your answer here..."
-              />
+          {/* Answer Section */}
+          <div className="flex h-[calc(100vh-200px)] flex-col bg-white">
+            <div className="mb-2 text-right text-sm">
+              <span
+                className={
+                  countWords(answers[currentTaskData.task_id] || "") >=
+                  currentTaskData.word_count_min
+                    ? "text-green-600 font-semibold"
+                    : "text-gray-600"
+                }
+              >
+                {countWords(answers[currentTaskData.task_id] || "")} words
+              </span>
+              <span className="text-gray-500">
+                {" "}
+                / {currentTaskData.word_count_min} minimum
+              </span>
             </div>
+            <textarea
+              value={answers[currentTaskData.task_id] || ""}
+              onChange={(e) =>
+                handleAnswerChange(currentTaskData.task_id, e.target.value)
+              }
+              className="flex-1 w-full rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-200 resize-none scrollbar-thin scrollbar-thumb-gray-200"
+              placeholder="Type your answer here..."
+            />
           </div>
-        )}
+        </div>
       </main>
 
-      {/* Navigation - Fixed at bottom */}
-      <div className="fixed bottom-0 left-0 right-0 border-t border-gray-200 bg-white">
-        <div className="mx-auto max-w-7xl p-4">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setCurrentTask(1)}
-              disabled={currentTask === 1}
-              className="rounded-lg border border-gray-300 bg-white px-6 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Previous Task
-            </button>
-            <div className="flex gap-2">
-              {[1, 2].map((task) => (
-                <button
-                  key={task}
-                  onClick={() => setCurrentTask(task)}
-                  className={`h-10 w-10 rounded-lg text-sm font-medium transition-colors ${
-                    task === currentTask
-                      ? "bg-gray-900 text-white"
-                      : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
-                  }`}
-                >
-                  {task}
-                </button>
-              ))}
-            </div>
-            <button
-              onClick={() => setCurrentTask(2)}
-              disabled={currentTask === 2}
-              className="rounded-lg bg-gray-900 px-6 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              Next Task
-            </button>
+      {/* Navigation Footer */}
+      <div className="fixed bottom-0 left-0 right-0 border-t border-gray-200 bg-white px-6 py-2 shadow-lg">
+        <div className="mx-auto flex max-w-7xl items-center justify-between">
+          <button
+            onClick={() => setCurrentTask((prev) => Math.max(1, prev - 1))}
+            disabled={currentTask === 1}
+            className="rounded-lg border border-gray-300 bg-white px-6 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Previous
+          </button>
+          <div className="flex gap-2">
+            {[1, 2].map((task) => (
+              <button
+                key={task}
+                onClick={() => setCurrentTask(task)}
+                className={`h-10 w-10 rounded-lg text-sm font-medium transition-colors ${
+                  task === currentTask
+                    ? "bg-gray-900 text-white"
+                    : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-100"
+                }`}
+              >
+                {task}
+              </button>
+            ))}
           </div>
+          <button
+            onClick={() => setCurrentTask((prev) => Math.min(2, prev + 1))}
+            disabled={currentTask === 2}
+            className="rounded-lg bg-gray-900 px-6 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Next
+          </button>
         </div>
       </div>
     </div>
   );
 }
+
+// Component to render each block type
+const RenderBlock = ({
+  block,
+}: {
+  block: {
+    type: string;
+    content?: string;
+    alt?: string;
+    label?: string;
+    placeholder?: string;
+    min_words?: number;
+  };
+}) => {
+  const { type, content } = block;
+
+  switch (type) {
+    case "header":
+      return (
+        <h3 className="mt-4 mb-3 text-base font-bold text-gray-900">
+          {content}
+        </h3>
+      );
+    case "instruction":
+      return (
+        <p className="mb-4 rounded-lg bg-purple-50 p-3 text-xs italic text-purple-900">
+          {content}
+        </p>
+      );
+    case "text":
+      return (
+        <p className="mb-2 text-sm leading-relaxed text-gray-700">{content}</p>
+      );
+    case "box":
+      return (
+        <div className="my-4 rounded-lg border-l-4 border-purple-600 bg-gray-50 p-4">
+          <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800 font-medium">
+            {content}
+          </pre>
+        </div>
+      );
+    case "image":
+      return (
+        <div className="my-6 flex justify-center">
+          <img
+            src={content}
+            alt={block.alt || "Task image"}
+            className="max-h-74 w-auto rounded-lg border shadow-sm object-contain"
+          />
+        </div>
+      );
+    case "editor":
+      // This is handled separately in the answer section
+      return null;
+    default:
+      return null;
+  }
+};

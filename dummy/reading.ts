@@ -384,27 +384,27 @@ The evidence is clear: matching teaching to a student’s particular learning st
         {
           type: "text",
           content:
-            "36. The idea of learning styles can give students the wrong idea about their level of {{36}blanks} ;",
+            "The idea of learning styles can give students the wrong idea about their level of {{36}blanks} ;",
         },
         {
           type: "text",
           content:
-            "37. Students who believe that intelligence is {{37}blanks} tend to do better than other students.",
+            "Students who believe that intelligence is {{37}blanks} tend to do better than other students.",
         },
         {
           type: "text",
           content:
-            "38. Students who have been told that they are {{38}blanks} learners might not try so hard to learn by reading or listening.",
+            "Students who have been told that they are {{38}blanks} learners might not try so hard to learn by reading or listening.",
         },
         {
           type: "text",
           content:
-            "39. Research has shown that students who use a {{39}blanks} of learning methods often learn more effectively.",
+            "Research has shown that students who use a {{39}blanks} of learning methods often learn more effectively.",
         },
         {
           type: "text",
           content:
-            "40. In a 2018 study, 78 percent of students said that they had a particular {{40}blanks} .",
+            "In a 2018 study, 78 percent of students said that they had a particular {{40}blanks} .",
         },
       ],
 

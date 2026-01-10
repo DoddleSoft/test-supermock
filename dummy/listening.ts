@@ -198,50 +198,48 @@ export const listeningModuleData = {
         {
           type: "text",
           content:
-            "21. {{21}mcq} The students in Akira Miyake’s study were all majoring in",
+            "{{21}mcq} The students in Akira Miyake’s study were all majoring in",
         },
         {
           type: "text",
-          content: "22. {{22}mcq} The aim of Miyake’s study was to investigate",
-        },
-        {
-          type: "text",
-          content:
-            "23. {{23}mcq} The female physics students were wrong to believe that",
+          content: "{{22}mcq} The aim of Miyake’s study was to investigate",
         },
         {
           type: "text",
           content:
-            "24. {{24}mcq} Miyake’s team asked the students to write about",
+            "{{23}mcq} The female physics students were wrong to believe that",
+        },
+        {
+          type: "text",
+          content: "{{24}mcq} Miyake’s team asked the students to write about",
         },
         {
           type: "text",
           content:
-            "25. {{25}mcq} What was the aim of the writing exercise done by the subjects?",
+            "{{25}mcq} What was the aim of the writing exercise done by the subjects?",
+        },
+        {
+          type: "text",
+          content: "{{26}mcq} What surprised the researchers about the study?",
         },
         {
           type: "text",
           content:
-            "26. {{26}mcq} What surprised the researchers about the study?",
+            "{{27}mcq} Greg and Lisa think Miyake’s results could have been affected by",
         },
         {
           type: "text",
           content:
-            "27. {{27}mcq} Greg and Lisa think Miyake’s results could have been affected by",
+            "{{28}mcq} Greg and Lisa decide that in their own project, they will compare the effects of",
         },
         {
           type: "text",
           content:
-            "28. {{28}mcq} Greg and Lisa decide that in their own project, they will compare the effects of",
+            "{{29}mcq} The main finding of Smolinsky’s research was that class teamwork activities",
         },
         {
           type: "text",
-          content:
-            "29. {{29}mcq} The main finding of Smolinsky’s research was that class teamwork activities",
-        },
-        {
-          type: "text",
-          content: "30. {{30}mcq} What will Lisa and Greg do next?",
+          content: "{{30}mcq} What will Lisa and Greg do next?",
         },
       ],
 

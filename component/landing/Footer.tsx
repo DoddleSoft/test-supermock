@@ -94,10 +94,10 @@ export default function Footer() {
         {/* Bottom Bar */}
         <div className="pt-6 md:pt-8 border-t border-black/5 flex flex-col md:flex-row items-center justify-between gap-4 text-center md:text-left">
           <p className="text-xs md:text-sm text-supermock-text-secondary/60">
-            &copy; {new Date().getFullYear()} Doddlesoft. All rights reserved.
+            &copy; {new Date().getFullYear()} Supermock. All rights reserved.
           </p>
           <p className="text-xs md:text-sm text-supermock-text-secondary/60">
-            Designed by Doddlesoft.inc.
+            Developed by Doddlesoft
           </p>
         </div>
       </div>
