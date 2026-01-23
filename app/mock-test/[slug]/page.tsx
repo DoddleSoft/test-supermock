@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { toast } from "sonner";
 import {
   Headphones,
   BookOpen,
@@ -15,15 +16,8 @@ import {
 } from "lucide-react";
 import Navbar from "@/component/landing/Navbar";
 import Footer from "@/component/landing/Footer";
-
-type QuestionSet = {
-  id: string;
-  title: string;
-  description: string;
-  difficulty?: string;
-  topic?: string;
-  time?: string;
-};
+import { authService } from "@/helpers/auth";
+import { Loader } from "@/component/ui/loader";
 
 const questionSets = {
   listening: [
@@ -132,31 +126,37 @@ const questionSets = {
 
 export default function MockTestPage() {
   const router = useRouter();
+  const params = useParams();
+  const slug = params?.slug as string | undefined;
   const [studentId, setStudentId] = useState("");
   const [selectedModule, setSelectedModule] = useState("");
   const [expandedModule, setExpandedModule] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Check authentication
-    const authenticated = sessionStorage.getItem("authenticated");
-    const storedStudentId = sessionStorage.getItem("studentId");
-    const storedModule = sessionStorage.getItem("selectedModule");
+    const validateAccess = async () => {
+      const access = await authService.getStudentAccess();
 
-    if (!authenticated || !storedStudentId) {
-      router.push("/auth/login");
-      return;
-    }
+      if (!access.success || !access.allowed) {
+        if (access.error) {
+          toast.error(access.error);
+        }
+        router.push(access.redirectPath || "/auth/login");
+        return;
+      }
 
-    setStudentId(storedStudentId);
-    setSelectedModule(storedModule || "");
-    setIsLoading(false);
-  }, [router]);
+      if (access.centerSlug && slug && access.centerSlug !== slug) {
+        router.replace(`/mock-test/${access.centerSlug}`);
+        return;
+      }
 
-  const handleSignOut = () => {
-    sessionStorage.clear();
-    router.push("/");
-  };
+      setStudentId(access.userId || "");
+      setSelectedModule("");
+      setIsLoading(false);
+    };
+
+    validateAccess();
+  }, [router, slug]);
 
   const handleModuleClick = (module: string) => {
     setExpandedModule(expandedModule === module ? null : module);
@@ -167,11 +167,7 @@ export default function MockTestPage() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-white">
-        <div className="text-gray-600">Loading...</div>
-      </div>
-    );
+    return <Loader />;
   }
 
   return (
@@ -234,8 +230,8 @@ export default function MockTestPage() {
                               set.difficulty === "Easy"
                                 ? "bg-green-100 text-green-700"
                                 : set.difficulty === "Medium"
-                                ? "bg-yellow-100 text-yellow-700"
-                                : "bg-red-100 text-red-700"
+                                  ? "bg-yellow-100 text-yellow-700"
+                                  : "bg-red-100 text-red-700"
                             }`}
                           >
                             {set.difficulty}
@@ -306,8 +302,8 @@ export default function MockTestPage() {
                                 set.difficulty === "Easy"
                                   ? "bg-green-100 text-green-700"
                                   : set.difficulty === "Medium"
-                                  ? "bg-yellow-100 text-yellow-700"
-                                  : "bg-red-100 text-red-700"
+                                    ? "bg-yellow-100 text-yellow-700"
+                                    : "bg-red-100 text-red-700"
                               }`}
                             >
                               {set.difficulty}
@@ -371,8 +367,8 @@ export default function MockTestPage() {
                               set.difficulty === "Easy"
                                 ? "bg-green-100 text-green-700"
                                 : set.difficulty === "Medium"
-                                ? "bg-yellow-100 text-yellow-700"
-                                : "bg-red-100 text-red-700"
+                                  ? "bg-yellow-100 text-yellow-700"
+                                  : "bg-red-100 text-red-700"
                             }`}
                           >
                             {set.difficulty}

@@ -56,7 +56,7 @@ export interface Answer {
  * Fetch complete reading module with all passages and questions
  */
 export async function fetchReadingModule(
-  moduleId: string
+  moduleId: string,
 ): Promise<ReadingModule | null> {
   try {
     const supabase = createClient();
@@ -104,7 +104,7 @@ export async function fetchReadingModule(
           ...passage,
           questions: questions || [],
         };
-      })
+      }),
     );
 
     return {
@@ -121,7 +121,7 @@ export async function fetchReadingModule(
  * Fetch reading module by paper ID
  */
 export async function fetchReadingModuleByPaperId(
-  paperId: string
+  paperId: string,
 ): Promise<ReadingModule | null> {
   try {
     const supabase = createClient();
@@ -152,7 +152,7 @@ export async function fetchReadingModuleByPaperId(
 export function getTotalQuestions(passages: Passage[]): number {
   return passages.reduce(
     (total, passage) => total + Object.keys(passage.questions).length,
-    0
+    0,
   );
 }
 
@@ -161,7 +161,7 @@ export function getTotalQuestions(passages: Passage[]): number {
  */
 export function getQuestionRange(
   passages: Passage[],
-  passageIndex: number
+  passageIndex: number,
 ): string {
   let startQuestion = 1;
   let endQuestion = 0;
@@ -185,7 +185,7 @@ export function getQuestionRange(
  */
 export function getPassageAnswers(
   answers: Map<string, Answer>,
-  passage: Passage
+  passage: Passage,
 ): Answer[] {
   const questionIds = Object.keys(passage.questions);
   return questionIds
@@ -198,7 +198,7 @@ export function getPassageAnswers(
  */
 export function isPassageComplete(
   answers: Map<string, Answer>,
-  passage: Passage
+  passage: Passage,
 ): boolean {
   const questionIds = Object.keys(passage.questions);
   return questionIds.every((questionId) => {
@@ -212,11 +212,11 @@ export function isPassageComplete(
  */
 export function getCompletionPercentage(
   answers: Map<string, Answer>,
-  passages: Passage[]
+  passages: Passage[],
 ): number {
   const totalQuestions = getTotalQuestions(passages);
   const answeredQuestions = Array.from(answers.values()).filter(
-    (answer) => answer.answer !== null && answer.answer !== ""
+    (answer) => answer.answer !== null && answer.answer !== "",
   ).length;
 
   return totalQuestions > 0
@@ -272,7 +272,7 @@ export async function submitReadingAnswers(
   moduleId: string,
   userId: string,
   answers: Map<string, Answer>,
-  timeSpent: number
+  timeSpent: number,
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const supabase = createClient();
@@ -309,7 +309,7 @@ export async function submitReadingAnswers(
  */
 export function getPassageByIndex(
   passages: Passage[],
-  index: number
+  index: number,
 ): Passage | null {
   return passages.find((p) => p.passage_index === index) || null;
 }
@@ -319,7 +319,7 @@ export function getPassageByIndex(
  */
 export function getNextPassage(
   passages: Passage[],
-  currentIndex: number
+  currentIndex: number,
 ): Passage | null {
   return passages.find((p) => p.passage_index === currentIndex + 1) || null;
 }
@@ -329,7 +329,7 @@ export function getNextPassage(
  */
 export function getPreviousPassage(
   passages: Passage[],
-  currentIndex: number
+  currentIndex: number,
 ): Passage | null {
   return passages.find((p) => p.passage_index === currentIndex - 1) || null;
 }

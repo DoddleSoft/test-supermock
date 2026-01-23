@@ -1,13 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { PenTool } from "lucide-react";
 import WritingNavbar from "@/component/modules/WritingNavbar";
+import { RenderBlock } from "@/component/modules/RenderBlock";
 import { writingModuleData } from "@/dummy/writing";
+import { authService } from "@/helpers/auth";
 
 export default function WritingTestPage() {
   const router = useRouter();
+  const params = useParams();
+  const slug = params?.slug as string | undefined;
   const [studentId, setStudentId] = useState("");
   const [timeLeft, setTimeLeft] = useState(60 * 60); // 60 minutes in seconds
   const [isStarted, setIsStarted] = useState(false);
@@ -31,16 +36,26 @@ export default function WritingTestPage() {
   }));
 
   useEffect(() => {
-    const authenticated = sessionStorage.getItem("authenticated");
-    const storedStudentId = sessionStorage.getItem("studentId");
+    const validateAccess = async () => {
+      const access = await authService.getStudentAccess();
 
-    if (!authenticated || !storedStudentId) {
-      router.push("/auth/login");
-      return;
-    }
+      if (!access.success || !access.allowed) {
+        if (access.error) {
+          toast.error(access.error);
+        }
+        router.push(access.redirectPath || "/auth/login");
+        return;
+      }
 
-    setStudentId(storedStudentId);
-  }, [router]);
+      if (access.centerSlug && slug && access.centerSlug !== slug) {
+        router.replace(`/mock-test/${access.centerSlug}/writing`);
+        return;
+      }
+
+      setStudentId(access.userId || "");
+    };
+    validateAccess();
+  }, [router, slug]);
 
   useEffect(() => {
     if (!isStarted || timeLeft <= 0) return;
@@ -74,7 +89,7 @@ export default function WritingTestPage() {
 
   const handleSubmitTest = () => {
     if (confirm("Are you sure you want to submit your test?")) {
-      router.push("/mock-test");
+      router.push(slug ? `/mock-test/${slug}` : "/mock-test");
     }
   };
 
@@ -174,7 +189,7 @@ export default function WritingTestPage() {
             <div className="flex-1 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-gray-200">
               <div className="space-y-3">
                 {currentTaskData.render_blocks.map((block, idx) => (
-                  <RenderBlock key={idx} block={block} />
+                  <RenderBlock key={idx} block={block} theme="purple" />
                 ))}
               </div>
             </div>
@@ -247,61 +262,3 @@ export default function WritingTestPage() {
     </div>
   );
 }
-
-// Component to render each block type
-const RenderBlock = ({
-  block,
-}: {
-  block: {
-    type: string;
-    content?: string;
-    alt?: string;
-    label?: string;
-    placeholder?: string;
-    min_words?: number;
-  };
-}) => {
-  const { type, content } = block;
-
-  switch (type) {
-    case "header":
-      return (
-        <h3 className="mt-4 mb-3 text-base font-bold text-gray-900">
-          {content}
-        </h3>
-      );
-    case "instruction":
-      return (
-        <p className="mb-4 rounded-lg bg-purple-50 p-3 text-xs italic text-purple-900">
-          {content}
-        </p>
-      );
-    case "text":
-      return (
-        <p className="mb-2 text-sm leading-relaxed text-gray-700">{content}</p>
-      );
-    case "box":
-      return (
-        <div className="my-4 rounded-lg border-l-4 border-purple-600 bg-gray-50 p-4">
-          <pre className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800 font-medium">
-            {content}
-          </pre>
-        </div>
-      );
-    case "image":
-      return (
-        <div className="my-6 flex justify-center">
-          <img
-            src={content}
-            alt={block.alt || "Task image"}
-            className="max-h-74 w-auto rounded-lg border shadow-sm object-contain"
-          />
-        </div>
-      );
-    case "editor":
-      // This is handled separately in the answer section
-      return null;
-    default:
-      return null;
-  }
-};

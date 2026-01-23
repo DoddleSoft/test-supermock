@@ -2,12 +2,38 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import Image from "next/image";
+import { useAuth } from "@/context/AuthContext";
+import { authService } from "@/helpers/auth";
+import { toast } from "sonner";
 
 export default function Navbar() {
+  const router = useRouter();
+  const { user } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [centerSlug, setCenterSlug] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Check authentication and get center slug on mount
+  useEffect(() => {
+    const checkAccess = async () => {
+      if (user) {
+        try {
+          const access = await authService.getStudentAccess();
+          if (access.allowed && access.centerSlug) {
+            setCenterSlug(access.centerSlug);
+          }
+        } catch (error) {
+          console.error("Access check error:", error);
+        }
+      }
+    };
+
+    checkAccess();
+  }, [user]);
 
   // Standard practice: Add background blur only after scrolling
   useEffect(() => {
@@ -16,9 +42,26 @@ export default function Navbar() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
+  const handleStartTest = async () => {
+    if (!user) {
+      router.push("/auth/login");
+      return;
+    }
+
+    if (!centerSlug) {
+      toast.error(
+        "Unable to determine your test center. Please contact support.",
+      );
+      return;
+    }
+
+    setIsLoading(true);
+    router.push(`/mock-test/${centerSlug}/exchange-code`);
+  };
+
   const handleSmoothScroll = (
     e: React.MouseEvent<HTMLAnchorElement>,
-    id: string
+    id: string,
   ) => {
     e.preventDefault(); // Prevent instant jump
     const element = document.getElementById(id);
@@ -72,12 +115,12 @@ export default function Navbar() {
 
           {/* --- CTA & Mobile Toggle --- */}
           <div className="flex items-center gap-3 md:gap-4">
-            <Link
-              href="/auth/login"
+            <button
+              onClick={handleStartTest}
               className="hidden sm:block px-4 py-2 md:px-5 text-xs md:text-sm font-semibold text-white transition-all bg-gradient-to-r from-red-600 to-red-900 rounded-full hover:from-red-700 hover:to-red-800 hover:shadow-sm hover:shadow-red-500/30 active:scale-95"
             >
               Start Mock Test
-            </Link>
+            </button>
 
             {/* Mobile Toggle Button */}
             <button
@@ -108,13 +151,15 @@ export default function Navbar() {
               Pricing
             </Link>
             <div className="h-px bg-slate-100 my-1 mx-2" /> {/* Divider */}
-            <Link
-              href="/mock-test"
-              onClick={() => setIsMobileMenuOpen(false)} // Added close logic here
+            <button
+              onClick={() => {
+                handleStartTest();
+                setIsMobileMenuOpen(false);
+              }}
               className="w-full text-center px-5 py-3 text-sm font-bold text-white bg-red-600 rounded-xl active:scale-95 transition-transform hover:bg-red-700"
             >
               Start Test
-            </Link>
+            </button>
           </div>
         )}
       </div>

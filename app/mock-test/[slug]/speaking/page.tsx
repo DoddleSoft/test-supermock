@@ -1,12 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Mic } from "lucide-react";
 import SpeakingNavbar from "@/component/modules/SpeakingNavbar";
+import { authService } from "@/helpers/auth";
 
 export default function SpeakingTestPage() {
   const router = useRouter();
+  const params = useParams();
+  const slug = params?.slug as string | undefined;
   const [studentId, setStudentId] = useState("");
   const [timeLeft, setTimeLeft] = useState(14 * 60); // 14 minutes in seconds
   const [isStarted, setIsStarted] = useState(false);
@@ -36,16 +40,27 @@ export default function SpeakingTestPage() {
   ];
 
   useEffect(() => {
-    const authenticated = sessionStorage.getItem("authenticated");
-    const storedStudentId = sessionStorage.getItem("studentId");
+    const validateAccess = async () => {
+      const access = await authService.getStudentAccess();
 
-    if (!authenticated || !storedStudentId) {
-      router.push("/auth/login");
-      return;
-    }
+      if (!access.success || !access.allowed) {
+        if (access.error) {
+          toast.error(access.error);
+        }
+        router.push(access.redirectPath || "/auth/login");
+        return;
+      }
 
-    setStudentId(storedStudentId);
-  }, [router]);
+      if (access.centerSlug && slug && access.centerSlug !== slug) {
+        router.replace(`/mock-test/${access.centerSlug}/speaking`);
+        return;
+      }
+
+      setStudentId(access.userId || "");
+    };
+
+    validateAccess();
+  }, [router, slug]);
 
   useEffect(() => {
     if (!isStarted || timeLeft <= 0) return;
