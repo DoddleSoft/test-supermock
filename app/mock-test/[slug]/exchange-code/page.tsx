@@ -1,16 +1,39 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, RectangleEllipsis } from "lucide-react";
+import { joinMockTest } from "@/helpers/scheduledTests";
+import { authService } from "@/helpers/auth";
+import { toast } from "sonner";
 
 export default function JoinCenterPage() {
   // Store digits as an array of 6 strings
   const [digits, setDigits] = useState<string[]>(Array(6).fill(""));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const testId = searchParams.get("test");
 
   // Refs to manage focus for each input
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  // Get user email on mount
+  useEffect(() => {
+    const getUserEmail = async () => {
+      const access = await authService.getStudentAccess();
+      if (!access.success || !access.userEmail) {
+        toast.error("Please log in to continue");
+        router.push("/auth/login");
+        return;
+      }
+      setUserEmail(access.userEmail);
+    };
+    getUserEmail();
+  }, [router]);
 
   // Focus the first input on mount
   useEffect(() => {
@@ -28,15 +51,47 @@ export default function JoinCenterPage() {
       return;
     }
 
+    if (!testId) {
+      setError("Test ID not found. Please go back and try again.");
+      return;
+    }
+
+    if (!userEmail) {
+      setError("User email not found. Please refresh and try again.");
+      return;
+    }
+
     setIsLoading(true);
     setError("");
 
     try {
-      console.log("Joining with code:", fullCode);
-      // await supabase.rpc('claim_join_code', { input_code: fullCode })
-      // router.push('/dashboard')
+      const result = await joinMockTest(fullCode, testId, userEmail);
+
+      if (!result.success) {
+        setError(result.error || "Failed to join test");
+        return;
+      }
+
+      // Store attempt info in sessionStorage for exam interface
+      sessionStorage.setItem("attemptId", result.attemptId!);
+      sessionStorage.setItem("paperId", result.paperId!);
+
+      // Show success message
+      if (result.status === "resumed") {
+        toast.success("Resuming your previous attempt");
+      } else {
+        toast.success("Successfully joined the test!");
+      }
+
+      // Get center slug from current path
+      const pathParts = window.location.pathname.split("/");
+      const centerSlug = pathParts[2]; // /mock-test/[slug]/exchange-code
+
+      // Redirect to exam interface
+      router.push(`/mock-test/${centerSlug}/${result.attemptId}`);
     } catch (err) {
-      setError("Invalid code. Please try again.");
+      console.error(err);
+      setError("Connection failed. Please try again.");
     } finally {
       setIsLoading(false);
     }

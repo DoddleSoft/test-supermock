@@ -11,11 +11,11 @@ import { toast } from "sonner";
 
 export default function Navbar() {
   const router = useRouter();
-  const { user } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [centerSlug, setCenterSlug] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const { user, userProfile, signOut, loading } = useAuth();
 
   // Check authentication and get center slug on mount
   useEffect(() => {
@@ -113,14 +113,38 @@ export default function Navbar() {
             <p className="text-sm text-gray-700 font-semibold">Test Portal</p>
           </div>
 
+          <a
+            href="#instructions"
+            className="text-md font-semibold cursor-pointer bg-gradient-to-r from-red-400 to-red-700 bg-clip-text text-transparent hover:underline"
+          >
+            View Instructions
+          </a>
+
           {/* --- CTA & Mobile Toggle --- */}
           <div className="flex items-center gap-3 md:gap-4">
-            <button
-              onClick={handleStartTest}
-              className="hidden sm:block px-4 py-2 md:px-5 text-xs md:text-sm font-semibold text-white transition-all bg-gradient-to-r from-red-600 to-red-900 rounded-full hover:from-red-700 hover:to-red-800 hover:shadow-sm hover:shadow-red-500/30 active:scale-95"
-            >
-              Start Mock Test
-            </button>
+            <div className="flex gap-4 justify-end">
+              {/* CENTER: Center Name */}
+
+              <div className="flex items-center gap-3 pr-4 border-r border-slate-400">
+                <div className="text-right">
+                  <p className="text-sm font-medium text-slate-900">
+                    {userProfile?.full_name ||
+                      user?.email?.split("@")[0] ||
+                      "User"}
+                  </p>
+                  <p className="text-[12px] text-slate-500">
+                    {user?.email || "N/A"}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={handleStartTest}
+                className="hidden sm:block px-4 py-2 md:px-5 text-xs md:text-sm font-semibold text-white transition-all bg-gradient-to-r from-red-600 to-red-900 rounded-lg hover:from-red-700 hover:to-red-800 hover:shadow-sm hover:shadow-red-500/30 active:scale-95"
+              >
+                Start Mock Test
+              </button>
+            </div>
 
             {/* Mobile Toggle Button */}
             <button

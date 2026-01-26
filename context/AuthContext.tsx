@@ -9,11 +9,16 @@ import React, {
 } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { authService, UserProfile } from "@/helpers/auth";
+import { createClient } from "@/utils/supabase/client";
 
 export interface AuthContextType {
   user: User | null;
   session: Session | null;
   userProfile: UserProfile | null;
+  studentId: string | null;
+  studentEmail: string | null;
+  studentCenterId: string | null;
+  studentCenterSlug: string | null;
   loading: boolean;
   signUp: (
     email: string,
@@ -44,7 +49,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [studentId, setStudentId] = useState<string | null>(null);
+  const [studentEmail, setStudentEmail] = useState<string | null>(null);
+  const [studentCenterId, setStudentCenterId] = useState<string | null>(null);
+  const [studentCenterSlug, setStudentCenterSlug] = useState<string | null>(
+    null,
+  );
   const [loading, setLoading] = useState(true);
+  const supabase = createClient();
 
   // Load initial session
   useEffect(() => {
@@ -58,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(session.user);
           // Don't block on user profile loading
           loadUserProfile(session.user.id).catch(console.error);
+          loadStudentContext(session.user).catch(console.error);
         }
       } catch (error) {
         console.error("Error loading session:", error);
@@ -83,8 +96,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session?.user) {
         // Don't block on user profile loading
         loadUserProfile(session.user.id).catch(console.error);
+        loadStudentContext(session.user).catch(console.error);
       } else {
         setUserProfile(null);
+        setStudentId(null);
+        setStudentEmail(null);
+        setStudentCenterId(null);
+        setStudentCenterSlug(null);
       }
 
       setLoading(false);
@@ -107,6 +125,81 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error("Error loading user profile:", error);
       setUserProfile(null);
+    }
+  };
+
+  const loadStudentContext = async (authUser: User) => {
+    try {
+      const { data: byId, error: byIdError } = await supabase
+        .from("student_profiles")
+        .select("student_id, center_id, email")
+        .eq("student_id", authUser.id)
+        .maybeSingle();
+
+      const studentProfile =
+        byId ||
+        (authUser.email
+          ? (
+              await supabase
+                .from("student_profiles")
+                .select("student_id, center_id, email")
+                .eq("email", authUser.email)
+                .maybeSingle()
+            ).data
+          : null);
+
+      if (byIdError) {
+        console.error("Student profile query error:", byIdError);
+      }
+
+      if (!studentProfile) {
+        setStudentId(null);
+        setStudentEmail(authUser.email ?? null);
+        setStudentCenterId(null);
+        setStudentCenterSlug(null);
+        return;
+      }
+
+      setStudentId(studentProfile.student_id ?? null);
+      setStudentEmail(studentProfile.email ?? authUser.email ?? null);
+      setStudentCenterId(studentProfile.center_id ?? null);
+
+      let resolvedCenterSlug: string | null = null;
+      if (studentProfile.center_id) {
+        const { data: center, error: centerError } = await supabase
+          .from("centers")
+          .select("slug")
+          .eq("center_id", studentProfile.center_id)
+          .maybeSingle();
+
+        if (centerError) {
+          console.error("Center lookup error:", centerError);
+        }
+
+        resolvedCenterSlug = center?.slug ?? null;
+        setStudentCenterSlug(resolvedCenterSlug);
+      } else {
+        setStudentCenterSlug(null);
+      }
+
+      if (studentProfile.email) {
+        sessionStorage.setItem("studentEmail", studentProfile.email);
+      }
+      if (studentProfile.student_id) {
+        sessionStorage.setItem("studentId", studentProfile.student_id);
+      }
+      if (studentProfile.center_id) {
+        sessionStorage.setItem("studentCenterId", studentProfile.center_id);
+      }
+      if (resolvedCenterSlug) {
+        sessionStorage.setItem("centerSlug", resolvedCenterSlug);
+      }
+    } catch (error) {
+      console.error("Error loading student context:", error);
+      setStudentId(null);
+      setStudentEmail(authUser.email ?? null);
+      setStudentCenterId(null);
+      setStudentCenterSlug(null);
     }
   };
 
@@ -205,6 +298,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       setSession(null);
       setUserProfile(null);
+      setStudentId(null);
+      setStudentEmail(null);
+      setStudentCenterId(null);
+      setStudentCenterSlug(null);
 
       // Redirect to login after logout
       window.location.href = "/auth/login";
@@ -226,6 +323,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user,
     session,
     userProfile,
+    studentId,
+    studentEmail,
+    studentCenterId,
+    studentCenterSlug,
     loading,
     signUp,
     signIn,

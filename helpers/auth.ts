@@ -47,50 +47,6 @@ class AuthService {
     return name.trim().toLowerCase().replace(/\s+/g, " ");
   }
 
-  private async getStudentProfileForUser(user: User): Promise<{
-    profile?: {
-      student_id: string;
-      center_id: string | null;
-      email: string | null;
-      name: string | null;
-    };
-    matchedBy?: "id" | "email";
-    error?: string;
-  }> {
-    try {
-      const { data: byId, error: byIdError } = await this.supabase
-        .from("student_profiles")
-        .select("student_id, center_id, email, name")
-        .eq("student_id", user.id)
-        .single();
-
-      if (byId && !byIdError) {
-        return { profile: byId, matchedBy: "id" };
-      }
-
-      if (user.email) {
-        const { data: byEmail, error: byEmailError } = await this.supabase
-          .from("student_profiles")
-          .select("student_id, center_id, email, name")
-          .eq("email", user.email)
-          .single();
-
-        if (byEmail && !byEmailError) {
-          return { profile: byEmail, matchedBy: "email" };
-        }
-      }
-
-      return { error: "Student profile not found" };
-    } catch (error) {
-      return {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to resolve student profile",
-      };
-    }
-  }
-
   /**
    * Sync user profile with auth session
    */
@@ -365,6 +321,7 @@ class AuthService {
     success: boolean;
     allowed: boolean;
     userId?: string;
+    userEmail?: string;
     centerSlug?: string;
     redirectPath?: string;
     error?: string;
@@ -426,6 +383,7 @@ class AuthService {
         success: true,
         allowed: true,
         userId: authUser.id,
+        userEmail: authUser.email,
         centerSlug: center.slug,
       };
     } catch (error) {

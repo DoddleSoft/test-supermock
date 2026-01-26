@@ -1,10 +1,42 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
 
 export default function NotFound() {
+  const pathname = usePathname();
+  const { studentCenterSlug } = useAuth();
+  const [mockTestHref, setMockTestHref] = useState("/mock-test");
+
+  const slugFromPath = useMemo(() => {
+    if (!pathname) return null;
+    const parts = pathname.split("/").filter(Boolean);
+    const mockTestIndex = parts.indexOf("mock-test");
+    if (mockTestIndex >= 0 && parts[mockTestIndex + 1]) {
+      return parts[mockTestIndex + 1];
+    }
+    return null;
+  }, [pathname]);
+
+  useEffect(() => {
+    if (slugFromPath) {
+      setMockTestHref(`/mock-test/${slugFromPath}`);
+      return;
+    }
+    if (studentCenterSlug) {
+      setMockTestHref(`/mock-test/${studentCenterSlug}`);
+      return;
+    }
+    const centerSlug = sessionStorage.getItem("centerSlug");
+    if (centerSlug) {
+      setMockTestHref(`/mock-test/${centerSlug}`);
+    }
+  }, [slugFromPath, studentCenterSlug]);
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-[#FAFAFA] px-6 text-center">
       {/* Subtle background element */}
@@ -29,7 +61,7 @@ export default function NotFound() {
 
         <div className="mt-12">
           <Link
-            href="/dashboard"
+            href={mockTestHref}
             className="group relative inline-flex items-center gap-2 overflow-hidden rounded-full border border-gray-900 bg-gray-900 px-8 py-3 text-white transition-all hover:bg-transparent hover:text-gray-900"
           >
             <motion.span

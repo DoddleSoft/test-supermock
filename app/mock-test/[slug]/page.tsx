@@ -2,136 +2,78 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
-import { toast } from "sonner";
 import {
+  Wifi,
+  Timer,
+  CloudLightning,
+  FileCheck,
   Headphones,
-  BookOpen,
-  PenTool,
-  Mic,
-  CheckCircle,
-  ChevronRight,
-  Clock,
-  FileText,
+  MonitorX,
 } from "lucide-react";
+import { toast } from "sonner";
+import { ChevronRight, Clock, Calendar, Building2 } from "lucide-react";
 import Navbar from "@/component/landing/Navbar";
 import Footer from "@/component/landing/Footer";
 import { authService } from "@/helpers/auth";
 import { Loader } from "@/component/ui/loader";
+import { formatTestTime, type ScheduledTest } from "@/helpers/scheduledTests";
+import {
+  fetchScheduledTests,
+  getTestStatus,
+  formatTestDate,
+} from "@/helpers/scheduledTests";
 
-const questionSets = {
-  listening: [
-    {
-      id: "ls-1",
-      title: "Question Set 1",
-      description: "Everyday conversations and monologues",
-      difficulty: "Easy",
-    },
-    {
-      id: "ls-2",
-      title: "Question Set 2",
-      description: "Academic discussions and lectures",
-      difficulty: "Medium",
-    },
-    {
-      id: "ls-3",
-      title: "Question Set 3",
-      description: "Complex conversations in various contexts",
-      difficulty: "Hard",
-    },
-    {
-      id: "ls-4",
-      title: "Question Set 4",
-      description: "Academic monologues and debates",
-      difficulty: "Hard",
-    },
-  ],
-  reading: [
-    {
-      id: "rd-1",
-      title: "Question Set 1",
-      description: "Technology and Innovation",
-      difficulty: "Easy",
-      topic: "Science & Tech",
-    },
-    {
-      id: "rd-2",
-      title: "Question Set 2",
-      description: "Environmental Issues",
-      difficulty: "Medium",
-      topic: "Environment",
-    },
-    {
-      id: "rd-3",
-      title: "Question Set 3",
-      description: "Historical Events",
-      difficulty: "Medium",
-      topic: "History",
-    },
-    {
-      id: "rd-4",
-      title: "Question Set 4",
-      description: "Social Sciences",
-      difficulty: "Hard",
-      topic: "Society",
-    },
-  ],
-  writing: [
-    {
-      id: "wr-1",
-      title: "Question Set 1",
-      description: "Task 1: Bar Chart | Task 2: Education",
-      difficulty: "Easy",
-    },
-    {
-      id: "wr-2",
-      title: "Question Set 2",
-      description: "Task 1: Line Graph | Task 2: Technology",
-      difficulty: "Medium",
-    },
-    {
-      id: "wr-3",
-      title: "Question Set 3",
-      description: "Task 1: Pie Chart | Task 2: Environment",
-      difficulty: "Medium",
-    },
-    {
-      id: "wr-4",
-      title: "Question Set 4",
-      description: "Task 1: Process Diagram | Task 2: Society",
-      difficulty: "Hard",
-    },
-  ],
-  speaking: [
-    {
-      id: "sp-1",
-      title: "Morning Session",
-      description: "9:00 AM - 10:00 AM",
-      time: "9:00 AM",
-    },
-    {
-      id: "sp-2",
-      title: "Afternoon Session",
-      description: "2:00 PM - 3:00 PM",
-      time: "2:00 PM",
-    },
-    {
-      id: "sp-3",
-      title: "Evening Session",
-      description: "5:00 PM - 6:00 PM",
-      time: "5:00 PM",
-    },
-  ],
-};
+const INSTRUCTIONS = [
+  {
+    id: 1,
+    title: "Stable Connection",
+    description:
+      "Ensure a reliable internet connection. Weak signals may cause lag, though we try to sync your progress.",
+    icon: Wifi,
+  },
+  {
+    id: 2,
+    title: "Continuous Timer",
+    description:
+      "Once the test begins, the timer runs automatically. It cannot be paused or reset under any circumstances.",
+    icon: Timer,
+  },
+  {
+    id: 3,
+    title: "Smart Auto-Save",
+    description:
+      "Don't panic if you disconnect. Your answers are saved automatically and synced when you reconnect.",
+    icon: CloudLightning,
+  },
+  {
+    id: 4,
+    title: "Audio Requirements",
+    description:
+      "For Listening modules, ensure your headphones are connected and volume is adjusted before starting.",
+    icon: Headphones,
+  },
+  {
+    id: 5,
+    title: "No Tab Switching",
+    description:
+      "Please remain in the test window. Frequent tab switching may be flagged as suspicious behavior.",
+    icon: MonitorX,
+  },
+  {
+    id: 6,
+    title: "Result Processing",
+    description:
+      "Comprehensive band scores and analytics will be available in your dashboard within 24 hours.",
+    icon: FileCheck,
+  },
+];
 
 export default function MockTestPage() {
   const router = useRouter();
   const params = useParams();
   const slug = params?.slug as string | undefined;
-  const [studentId, setStudentId] = useState("");
-  const [selectedModule, setSelectedModule] = useState("");
-  const [expandedModule, setExpandedModule] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [scheduledTests, setScheduledTests] = useState<ScheduledTest[]>([]);
 
   useEffect(() => {
     const validateAccess = async () => {
@@ -150,20 +92,39 @@ export default function MockTestPage() {
         return;
       }
 
-      setStudentId(access.userId || "");
-      setSelectedModule("");
+      // Fetch scheduled tests
+      if (slug) {
+        const { tests, error } = await fetchScheduledTests(slug);
+        if (error) {
+          toast.error(error);
+        } else {
+          setScheduledTests(tests);
+        }
+      }
+
       setIsLoading(false);
     };
 
     validateAccess();
   }, [router, slug]);
 
-  const handleModuleClick = (module: string) => {
-    setExpandedModule(expandedModule === module ? null : module);
+  const handleJoinTest = (testId: string) => {
+    router.push(`/mock-test/${slug}/exchange-code?test=${testId}`);
   };
 
-  const handleQuestionSetSelect = (module: string, setId: string) => {
-    router.push(`/mock-test/${module}?set=${setId}`);
+  const getStatusBadgeColor = (
+    status: "scheduled" | "in_progress" | "completed" | "cancelled",
+  ) => {
+    switch (status) {
+      case "in_progress":
+        return "bg-red-400 text-red-900 border-red-400";
+      case "scheduled":
+        return "bg-red-100 text-red-700 border-red-200";
+      case "completed":
+        return "bg-green-100 text-green-700 border-green-200";
+      case "cancelled":
+        return "bg-gray-100 text-gray-600 border-gray-200";
+    }
   };
 
   if (isLoading) {
@@ -175,302 +136,156 @@ export default function MockTestPage() {
       <main className="mx-auto max-w-7xl px-6 py-12">
         <Navbar />
 
-        {/* Test Modules */}
-        <div className="mb-12 mt-24 space-y-4">
-          {/* Listening Module */}
-          <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
-            <button
-              onClick={() => handleModuleClick("listening")}
-              className="w-full flex items-center justify-between p-6 text-left transition-colors hover:bg-gray-50"
-            >
-              <div className="flex items-center gap-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-50">
-                  <Headphones className="h-6 w-6 text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-900">
-                    Listening Test
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    40 questions • 30 minutes
-                  </p>
-                </div>
-              </div>
-              <ChevronRight
-                className={`h-6 w-6 text-gray-400 transition-transform ${
-                  expandedModule === "listening" ? "rotate-90" : ""
-                }`}
-              />
-            </button>
-            {expandedModule === "listening" && (
-              <div className="border-t border-gray-200 bg-gray-50 p-6">
-                <h4 className="mb-4 font-semibold text-gray-900">
-                  Select a Question Set:
-                </h4>
-                <div className="grid gap-3 md:grid-cols-2">
-                  {questionSets.listening.map((set) => (
-                    <button
-                      key={set.id}
-                      onClick={() =>
-                        handleQuestionSetSelect("listening", set.id)
-                      }
-                      className="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-4 text-left transition-all hover:border-blue-600 hover:shadow-md"
-                    >
-                      <FileText className="h-5 w-5 text-blue-600 mt-0.5 flex-shrink-0" />
+        {/* Scheduled Tests Section */}
+        {scheduledTests.length > 0 ? (
+          <div className="mb-12 mt-24">
+            <div className="mb-6">
+              <h2 className="text-xl font-bold text-gray-900">
+                Upcoming Mock Tests
+              </h2>
+            </div>
+
+            <div className="grid gap-6 md:grid-cols-2">
+              {scheduledTests.map((test) => {
+                const testStatus = getTestStatus(test);
+                return (
+                  <div
+                    key={test.id}
+                    className="group rounded-2xl border-2 border-gray-200 bg-white p-6 shadow-sm hover:shadow-xl transition-all duration-300 hover:border-red-300"
+                  >
+                    {/* Header */}
+                    <div className="mb-4 flex items-start justify-between">
                       <div className="flex-1">
-                        <h5 className="font-semibold text-gray-900">
-                          {set.title}
-                        </h5>
-                        <p className="text-sm text-gray-600">
-                          {set.description}
-                        </p>
-                        {set.difficulty && (
-                          <span
-                            className={`mt-2 inline-block rounded-full px-2 py-1 text-xs font-medium ${
-                              set.difficulty === "Easy"
-                                ? "bg-green-100 text-green-700"
-                                : set.difficulty === "Medium"
-                                  ? "bg-yellow-100 text-yellow-700"
-                                  : "bg-red-100 text-red-700"
-                            }`}
-                          >
-                            {set.difficulty}
+                        <h3 className="text-xl font-bold text-gray-900 mb-2">
+                          {test.title}
+                        </h3>
+                        {test.paper && (
+                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 border border-red-200">
+                            {test.paper.paper_type}
                           </span>
                         )}
                       </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+                      <span
+                        className={`px-3 py-1.5 text-xs font-bold rounded-full border-2 ${getStatusBadgeColor(testStatus.status)}`}
+                      >
+                        {testStatus.status === "in_progress"
+                          ? "LIVE"
+                          : testStatus.status === "completed"
+                            ? "COMPLETED"
+                            : testStatus.status === "cancelled"
+                              ? "CANCELLED"
+                              : "SCHEDULED"}
+                      </span>
+                    </div>
 
-          {/* Reading Module */}
-          <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
-            <button
-              onClick={() => handleModuleClick("reading")}
-              className="w-full flex items-center justify-between p-6 text-left transition-colors hover:bg-gray-50"
-            >
-              <div className="flex items-center gap-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-green-50">
-                  <BookOpen className="h-6 w-6 text-green-600" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-900">
-                    Reading Test
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    40 questions • 60 minutes
-                  </p>
-                </div>
-              </div>
-              <ChevronRight
-                className={`h-6 w-6 text-gray-400 transition-transform ${
-                  expandedModule === "reading" ? "rotate-90" : ""
-                }`}
-              />
-            </button>
-            {expandedModule === "reading" && (
-              <div className="border-t border-gray-200 bg-gray-50 p-6">
-                <h4 className="mb-4 font-semibold text-gray-900">
-                  Select a Question Set:
-                </h4>
-                <div className="grid gap-3 md:grid-cols-2">
-                  {questionSets.reading.map((set) => (
-                    <button
-                      key={set.id}
-                      onClick={() => handleQuestionSetSelect("reading", set.id)}
-                      className="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-4 text-left transition-all hover:border-green-600 hover:shadow-md"
-                    >
-                      <FileText className="h-5 w-5 text-green-600 mt-0.5 flex-shrink-0" />
-                      <div className="flex-1">
-                        <h5 className="font-semibold text-gray-900">
-                          {set.title}
-                        </h5>
-                        <p className="text-sm text-gray-600">
-                          {set.description}
-                        </p>
-                        <div className="mt-2 flex items-center gap-2">
-                          {set.topic && (
-                            <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700">
-                              {set.topic}
-                            </span>
-                          )}
-                          {set.difficulty && (
-                            <span
-                              className={`rounded-full px-2 py-1 text-xs font-medium ${
-                                set.difficulty === "Easy"
-                                  ? "bg-green-100 text-green-700"
-                                  : set.difficulty === "Medium"
-                                    ? "bg-yellow-100 text-yellow-700"
-                                    : "bg-red-100 text-red-700"
-                              }`}
-                            >
-                              {set.difficulty}
-                            </span>
-                          )}
+                    {/* Details Grid */}
+                    <div className="space-y-3 mb-5 bg-gray-50 rounded-lg p-4">
+                      <div className="flex items-center gap-3 text-gray-700">
+                        <Calendar className="h-5 w-5 text-blue-600" />
+                        <div>
+                          <p className="text-xs text-gray-500">Date</p>
+                          <p className="font-semibold">
+                            {formatTestDate(test.scheduled_at)}
+                          </p>
                         </div>
                       </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Writing Module */}
-          <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
-            <button
-              onClick={() => handleModuleClick("writing")}
-              className="w-full flex items-center justify-between p-6 text-left transition-colors hover:bg-gray-50"
-            >
-              <div className="flex items-center gap-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-50">
-                  <PenTool className="h-6 w-6 text-purple-600" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-900">
-                    Writing Test
-                  </h3>
-                  <p className="text-sm text-gray-600">2 tasks • 60 minutes</p>
-                </div>
-              </div>
-              <ChevronRight
-                className={`h-6 w-6 text-gray-400 transition-transform ${
-                  expandedModule === "writing" ? "rotate-90" : ""
-                }`}
-              />
-            </button>
-            {expandedModule === "writing" && (
-              <div className="border-t border-gray-200 bg-gray-50 p-6">
-                <h4 className="mb-4 font-semibold text-gray-900">
-                  Select a Question Set:
-                </h4>
-                <div className="grid gap-3 md:grid-cols-2">
-                  {questionSets.writing.map((set) => (
-                    <button
-                      key={set.id}
-                      onClick={() => handleQuestionSetSelect("writing", set.id)}
-                      className="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-4 text-left transition-all hover:border-purple-600 hover:shadow-md"
-                    >
-                      <FileText className="h-5 w-5 text-purple-600 mt-0.5 flex-shrink-0" />
-                      <div className="flex-1">
-                        <h5 className="font-semibold text-gray-900">
-                          {set.title}
-                        </h5>
-                        <p className="text-sm text-gray-600">
-                          {set.description}
-                        </p>
-                        {set.difficulty && (
-                          <span
-                            className={`mt-2 inline-block rounded-full px-2 py-1 text-xs font-medium ${
-                              set.difficulty === "Easy"
-                                ? "bg-green-100 text-green-700"
-                                : set.difficulty === "Medium"
-                                  ? "bg-yellow-100 text-yellow-700"
-                                  : "bg-red-100 text-red-700"
-                            }`}
-                          >
-                            {set.difficulty}
-                          </span>
-                        )}
+                      <div className="flex items-center gap-3 text-gray-700">
+                        <Clock className="h-5 w-5 text-green-600" />
+                        <div>
+                          <p className="text-xs text-gray-500">
+                            Time & Duration
+                          </p>
+                          <p className="font-semibold">
+                            {formatTestTime(test.scheduled_at)} •{" "}
+                            {test.duration_minutes} min
+                          </p>
+                        </div>
                       </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+                      {test.center && (
+                        <div className="flex items-center gap-3 text-gray-700">
+                          <Building2 className="h-5 w-5 text-orange-600" />
+                          <div>
+                            <p className="text-xs text-gray-500">Test Center</p>
+                            <p className="font-semibold">{test.center.name}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
 
-          {/* Speaking Module */}
-          <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
-            <button
-              onClick={() => handleModuleClick("speaking")}
-              className="w-full flex items-center justify-between p-6 text-left transition-colors hover:bg-gray-50"
-            >
-              <div className="flex items-center gap-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-50">
-                  <Mic className="h-6 w-6 text-orange-600" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-900">
-                    Speaking Test
-                  </h3>
-                  <p className="text-sm text-gray-600">
-                    3 parts • 11-14 minutes
-                  </p>
-                </div>
-              </div>
-              <ChevronRight
-                className={`h-6 w-6 text-gray-400 transition-transform ${
-                  expandedModule === "speaking" ? "rotate-90" : ""
-                }`}
-              />
-            </button>
-            {expandedModule === "speaking" && (
-              <div className="border-t border-gray-200 bg-gray-50 p-6">
-                <h4 className="mb-4 font-semibold text-gray-900">
-                  Select a Time Slot:
-                </h4>
-                <div className="grid gap-3 md:grid-cols-3">
-                  {questionSets.speaking.map((set) => (
+                    {/* Action Button */}
                     <button
-                      key={set.id}
-                      onClick={() =>
-                        handleQuestionSetSelect("speaking", set.id)
-                      }
-                      className="flex items-start gap-3 rounded-lg border border-gray-200 bg-white p-4 text-left transition-all hover:border-orange-600 hover:shadow-md"
+                      onClick={() => handleJoinTest(test.id)}
+                      disabled={!testStatus.canJoin}
+                      className={`w-full py-3 px-4 rounded-xl font-bold text-sm transition-all duration-200 ${
+                        testStatus.canJoin
+                          ? "bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white shadow-md hover:shadow-lg "
+                          : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                      }`}
                     >
-                      <Clock className="h-5 w-5 text-orange-600 mt-0.5 flex-shrink-0" />
-                      <div className="flex-1">
-                        <h5 className="font-semibold text-gray-900">
-                          {set.title}
-                        </h5>
-                        <p className="text-sm text-gray-600">
-                          {set.description}
-                        </p>
-                      </div>
+                      {testStatus.canJoin ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <span>Join Now</span>
+                          <ChevronRight className="h-5 w-5" />
+                        </span>
+                      ) : (
+                        testStatus.countdown || "Test Not Available"
+                      )}
                     </button>
-                  ))}
-                </div>
-              </div>
-            )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="mb-12 mt-24 text-center py-16 bg-gray-50 rounded-2xl border-2 border-dashed border-gray-300">
+            <Calendar className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">
+              No Upcoming Tests
+            </h3>
+            <p className="text-gray-600">
+              There are no scheduled tests at the moment. Check back later.
+            </p>
+          </div>
+        )}
 
-        {/* Test Instructions */}
-        <div className="rounded-2xl border border-gray-200 bg-gray-50 p-8">
-          <h2 className="mb-4 text-2xl font-semibold text-gray-900">
-            Before You Begin
-          </h2>
-          <ul className="space-y-3 text-gray-700">
-            <li className="flex items-start gap-3">
-              <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-green-600" />
-              <span>
-                Ensure you have a stable internet connection throughout the test
-              </span>
-            </li>
-            <li className="flex items-start gap-3">
-              <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-green-600" />
-              <span>
-                Once you start a test, the timer will begin automatically and
-                cannot be paused
-              </span>
-            </li>
-            <li className="flex items-start gap-3">
-              <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-green-600" />
-              <span>
-                All answers are auto-saved. Your progress will be preserved if
-                disconnected
-              </span>
-            </li>
-            <li className="flex items-start gap-3">
-              <CheckCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-green-600" />
-              <span>
-                Results will be available within 24 hours of test completion
-              </span>
-            </li>
-          </ul>
+        <div
+          id="instructions"
+          className="w-full bg-white py-8 scroll-smooth scroll-mt-28"
+        >
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold text-gray-900">
+              Before You Begin
+            </h2>
+            <p className="mt-2 text-gray-500">
+              Please review the following guidelines to ensure a smooth
+              examination experience.
+            </p>
+          </div>
+
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {INSTRUCTIONS.map((item) => (
+              <div
+                key={item.id}
+                className="group relative flex flex-col items-start rounded-xl border border-gray-100 bg-white p-6 shadow-sm transition-all duration-200 hover:border-red-100 hover:shadow-md"
+              >
+                {/* Red Accent Line on Hover */}
+                <div className="absolute top-0 left-0 h-1 w-full bg-red-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100 rounded-t-xl" />
+
+                {/* Icon Container */}
+                <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-lg bg-red-50 text-red-600 transition-colors group-hover:bg-red-400 group-hover:text-white">
+                  <item.icon className="h-6 w-6" strokeWidth={2} />
+                </div>
+
+                {/* Content */}
+                <h3 className="mb-2 text-lg font-semibold text-gray-900 group-hover:text-red-700 transition-colors">
+                  {item.title}
+                </h3>
+                <p className="text-sm leading-relaxed text-gray-600">
+                  {item.description}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       </main>
       <Footer />

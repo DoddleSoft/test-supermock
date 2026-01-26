@@ -14,6 +14,7 @@ export interface RenderBlockProps {
     min_words?: number;
   };
   theme?: ThemeColor;
+  showQuestionNumbers?: boolean;
   // Optional interactive props (for Reading/Listening)
   questions?: Record<string, { answer: string; options?: any[] }>;
   answers?: Record<string, string>;
@@ -48,6 +49,7 @@ const themeColors = {
 export const RenderBlock: React.FC<RenderBlockProps> = ({
   block,
   theme = "green",
+  showQuestionNumbers = false,
   questions = {},
   answers = {},
   onAnswerChange,
@@ -55,13 +57,14 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
   const { type, content } = block;
   const colors = themeColors[theme];
 
-  // Parse placeholders like {{1}boolean}, {{8}blanks}, {{14}dropdown}
+  // Parse placeholders like {{1}boolean}, {{8}blanks}, {{14}dropdown}, {{3}true-false}, {{23}mcq}
   const renderContent = (text: string) => {
     if (!onAnswerChange) {
       return <>{text}</>;
     }
 
-    const regex = /{{(\d+)}(boolean|blanks|dropdown)}/g;
+    const regex = /{{(\d+)}(boolean|blanks|dropdown|true-false|mcq)}/g;
+
     const parts: React.ReactElement[] = [];
     let lastIndex = 0;
     let match;
@@ -80,39 +83,132 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
       const inputType = match[2];
       const qData = questions[qNum];
 
-      if (inputType === "boolean" && qData?.options) {
-        // Render dropdown for TRUE/FALSE/NOT GIVEN
+      if (inputType === "true-false") {
+        const options = qData?.options ?? ["TRUE", "FALSE", "NOT GIVEN"];
         parts.push(
-          <select
-            key={`q-${qNum}`}
-            value={answers[qNum] || ""}
-            onChange={(e) => onAnswerChange(qNum, e.target.value)}
-            className={`mx-1 inline-block min-w-[140px] rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-1 ${colors.focus}`}
-          >
-            <option value="">Select...</option>
-            {qData.options.map((opt: any) => (
-              <option key={opt} value={opt}>
-                {opt}
-              </option>
-            ))}
-          </select>,
+          <span key={`q-${qNum}`} className="inline-flex items-center gap-1">
+            {showQuestionNumbers && (
+              <span className="text-xs font-semibold text-gray-600">
+                {qNum}.
+              </span>
+            )}
+            <select
+              value={answers[qNum] || ""}
+              onChange={(e) => onAnswerChange(qNum, e.target.value)}
+              className={`mx-1 inline-block min-w-[140px] rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-1 ${colors.focus}`}
+            >
+              <option value="">Select...</option>
+              {options.map((opt: any) => {
+                const value = typeof opt === "string" ? opt : opt.label;
+                const label =
+                  typeof opt === "string"
+                    ? opt
+                    : `${opt.label}${opt.text ? ` ${opt.text}` : ""}`;
+                return (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+          </span>,
+        );
+      } else if (inputType === "boolean" && qData?.options) {
+        // Render dropdown for TRUE/FALSE/NOT GIVEN or YES/NO/NOT GIVEN
+        parts.push(
+          <span key={`q-${qNum}`} className="inline-flex items-center gap-1">
+            {showQuestionNumbers && (
+              <span className="text-xs font-semibold text-gray-600">
+                {qNum}.
+              </span>
+            )}
+            <select
+              value={answers[qNum] || ""}
+              onChange={(e) => onAnswerChange(qNum, e.target.value)}
+              className={`mx-1 inline-block min-w-[140px] rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-1 ${colors.focus}`}
+            >
+              <option value="">Select...</option>
+              {qData.options.map((opt: any) => {
+                const value = typeof opt === "string" ? opt : opt.label;
+                const label =
+                  typeof opt === "string"
+                    ? opt
+                    : `${opt.label}${opt.text ? ` ${opt.text}` : ""}`;
+                return (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+          </span>,
+        );
+      } else if (inputType === "mcq") {
+        // UPDATED: No longer requires `&& qData?.options` to render the select.
+        // It checks inside the select if options exist.
+        const hasOptions = qData?.options && qData.options.length > 0;
+
+        parts.push(
+          <span key={`q-${qNum}`} className="inline-flex items-center gap-1">
+            {showQuestionNumbers && (
+              <span className="text-xs font-semibold text-gray-600">
+                {qNum}.
+              </span>
+            )}
+            <select
+              value={answers[qNum] || ""}
+              onChange={(e) => onAnswerChange(qNum, e.target.value)}
+              className={`mx-1 inline-block min-w-[140px] rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-1 ${colors.focus}`}
+            >
+              <option value="">Select...</option>
+              {hasOptions ? (
+                qData!.options!.map((opt: any) => {
+                  const value = typeof opt === "string" ? opt : opt.label;
+                  const label =
+                    typeof opt === "string"
+                      ? opt
+                      : `${opt.label}${opt.text ? ` ${opt.text}` : ""}`;
+                  return (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  );
+                })
+              ) : (
+                <option disabled>No options available</option>
+              )}
+            </select>
+          </span>,
         );
       } else if (inputType === "dropdown" && qData?.options) {
         // Render dropdown for MCQ options (i, ii, iii, A, B, C, etc.)
         parts.push(
-          <select
-            key={`q-${qNum}`}
-            value={answers[qNum] || ""}
-            onChange={(e) => onAnswerChange(qNum, e.target.value)}
-            className={`mx-1 inline-block min-w-[100px] rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-1 ${colors.focus}`}
-          >
-            <option value="">Select...</option>
-            {qData.options.map((opt: any) => (
-              <option key={opt} value={opt}>
-                {opt}
-              </option>
-            ))}
-          </select>,
+          <span key={`q-${qNum}`} className="inline-flex items-center gap-1">
+            {showQuestionNumbers && (
+              <span className="text-xs font-semibold text-gray-600">
+                {qNum}.
+              </span>
+            )}
+            <select
+              value={answers[qNum] || ""}
+              onChange={(e) => onAnswerChange(qNum, e.target.value)}
+              className={`mx-1 inline-block min-w-[100px] rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-1 ${colors.focus}`}
+            >
+              <option value="">Select...</option>
+              {qData.options.map((opt: any) => {
+                const value = typeof opt === "string" ? opt : opt.label;
+                const label =
+                  typeof opt === "string"
+                    ? opt
+                    : `${opt.label}${opt.text ? ` ${opt.text}` : ""}`;
+                return (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+          </span>,
         );
       } else if (inputType === "blanks") {
         // Render text input for fill-in-the-blank with question number
@@ -154,7 +250,7 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
     case "instruction":
       return (
         <p
-          className={`mb-4 rounded-lg p-3 text-xs italic ${colors.instruction}`}
+          className={`mb-4 rounded-lg p-3 text-xs italic whitespace-pre-wrap ${colors.instruction}`}
         >
           {content}
         </p>
@@ -196,59 +292,13 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
       );
 
     case "text":
-      // Check for Radio/MCQ Block Type first (used in Listening)
+      // Default: Inline Rendering (Dropdowns / Blanks) for Reading/Listening
       if (content && onAnswerChange) {
-        const mcqMatch = content.match(/{{(\d+)}mcq}/);
-
-        if (mcqMatch) {
-          const qNum = mcqMatch[1];
-          const qData = questions[qNum];
-          // Clean the text to remove the tag
-          const cleanContent = content.replace(/{{(\d+)}mcq}/, "").trim();
-
-          return (
-            <div className="mb-4 text-xs leading-7 text-gray-800">
-              {/* The Question Text */}
-              <div className="mb-2">
-                <span className="font-semibold text-gray-600 mr-1">
-                  {qNum}.
-                </span>
-                {cleanContent}
-              </div>
-
-              {/* The Options (Radio Buttons) */}
-              <div className="ml-4 space-y-2">
-                {qData?.options?.map((opt: any) => {
-                  const label = typeof opt === "string" ? opt : opt.label;
-                  const text = typeof opt === "string" ? "" : opt.text;
-                  return (
-                    <label
-                      key={label}
-                      className="flex cursor-pointer items-start gap-2"
-                    >
-                      <input
-                        type="radio"
-                        name={`q-${qNum}`}
-                        value={label}
-                        checked={answers[qNum] === label}
-                        onChange={(e) => onAnswerChange(qNum, e.target.value)}
-                        className={`mt-0.5 h-3 w-3 border-gray-300 ${colors.radio}`}
-                      />
-                      <span className="text-xs text-gray-700">
-                        <span className="font-bold mr-1">{label}</span>
-                        {text}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        }
-
-        // Default: Inline Rendering (Dropdowns / Blanks) for Reading/Listening
         return (
-          <div className="mb-2 text-xs leading-7 text-gray-800">
+          <div
+            className="mb-2 text-xs leading-7 text-gray-800 whitespace-pre-wrap"
+            style={{ tabSize: 4 }}
+          >
             {renderContent(content)}
           </div>
         );
@@ -257,6 +307,15 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
       // Simple text rendering for Writing (no interactive elements)
       return (
         <p className="mb-2 text-sm leading-relaxed text-gray-700">{content}</p>
+      );
+
+    case "html":
+      return (
+        <div
+          className="mb-3 text-sm leading-relaxed text-gray-700 whitespace-pre-wrap"
+          style={{ tabSize: 4 }}
+          dangerouslySetInnerHTML={{ __html: content || "" }}
+        />
       );
 
     case "image":

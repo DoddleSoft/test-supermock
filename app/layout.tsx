@@ -15,9 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SuperMock - IELTS Exam Preparation & Mock Tests",
-  description:
-    "Prepare for your IELTS exam with SuperMock's comprehensive mock tests. Practice all four modules: Listening, Reading, Writing, and Speaking with realistic exam conditions.",
+  title: "Test | SuperMock - IELTS Mock Test Platform",
+  description: "Prepare for your IELTS exam with SuperMock IELTS tests system.",
 };
 
 export default function RootLayout({

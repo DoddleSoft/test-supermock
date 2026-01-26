@@ -177,26 +177,6 @@ update on papers for EACH row
 execute FUNCTION check_paper_module_types ();
 
 
-
-create table public.question_answers (
-  id uuid not null default gen_random_uuid (),
-  sub_section_id uuid null,
-  question_ref text not null,
-  correct_answers jsonb null,
-  options jsonb null,
-  explanation text null,
-  marks double precision null default 1.0,
-  created_at timestamp with time zone null default now(),
-  updated_at timestamp with time zone null default now(),
-  constraint question_answers_pkey primary key (id),
-  constraint question_answers_sub_section_id_fkey foreign KEY (sub_section_id) references sub_sections (id) on delete CASCADE
-) TABLESPACE pg_default;
-
-create index IF not exists idx_qa_options on public.question_answers using gin (options) TABLESPACE pg_default;
-
-create index IF not exists idx_qa_sub_section_id on public.question_answers using btree (sub_section_id) TABLESPACE pg_default;
-
-
 create table public.scheduled_tests (
   id uuid not null default gen_random_uuid (),
   center_id uuid not null,
@@ -205,9 +185,10 @@ create table public.scheduled_tests (
   scheduled_at timestamp with time zone not null,
   duration_minutes integer null default 180,
   status text not null default 'scheduled'::text,
-  created_by uuid null,
   created_at timestamp with time zone null default now(),
   updated_at timestamp with time zone null default now(),
+  otp integer null,
+  attendee integer null default 0,
   constraint scheduled_tests_pkey primary key (id),
   constraint scheduled_tests_center_id_fkey foreign KEY (center_id) references centers (center_id) on delete CASCADE,
   constraint scheduled_tests_paper_id_fkey foreign KEY (paper_id) references papers (id) on delete set null,
@@ -233,6 +214,76 @@ create index IF not exists idx_scheduled_tests_status on public.scheduled_tests 
 
 create index IF not exists idx_scheduled_tests_scheduled_at on public.scheduled_tests using btree (scheduled_at) TABLESPACE pg_default;
 
+create unique INDEX IF not exists idx_unique_active_otp on public.scheduled_tests using btree (otp) TABLESPACE pg_default
+where
+  (
+    status = any (array['scheduled'::text, 'in_progress'::text])
+  );
+
+
+create table public.question_answers (
+  id uuid not null default gen_random_uuid (),
+  sub_section_id uuid null,
+  question_ref text not null,
+  correct_answers jsonb null,
+  options jsonb null,
+  explanation text null,
+  marks double precision null default 1.0,
+  created_at timestamp with time zone null default now(),
+  updated_at timestamp with time zone null default now(),
+  constraint question_answers_pkey primary key (id),
+  constraint question_answers_sub_section_id_fkey foreign KEY (sub_section_id) references sub_sections (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create index IF not exists idx_qa_options on public.question_answers using gin (options) TABLESPACE pg_default;
+
+create index IF not exists idx_qa_sub_section_id on public.question_answers using btree (sub_section_id) TABLESPACE pg_default;
+
+
+
+
+create table public.scheduled_tests (
+  id uuid not null default gen_random_uuid (),
+  center_id uuid not null,
+  paper_id uuid null,
+  title text not null,
+  scheduled_at timestamp with time zone not null,
+  duration_minutes integer null default 180,
+  status text not null default 'scheduled'::text,
+  created_at timestamp with time zone null default now(),
+  updated_at timestamp with time zone null default now(),
+  otp integer null,
+  attendee integer null default 0, -- no of attendees
+  constraint scheduled_tests_pkey primary key (id),
+  constraint scheduled_tests_center_id_fkey foreign KEY (center_id) references centers (center_id) on delete CASCADE,
+  constraint scheduled_tests_paper_id_fkey foreign KEY (paper_id) references papers (id) on delete set null,
+  constraint scheduled_tests_status_check check (
+    (
+      status = any (
+        array[
+          'scheduled'::text,
+          'in_progress'::text,
+          'completed'::text,
+          'cancelled'::text
+        ]
+      )
+    )
+  )
+) TABLESPACE pg_default;
+
+create index IF not exists idx_scheduled_tests_center_id on public.scheduled_tests using btree (center_id) TABLESPACE pg_default;
+
+create index IF not exists idx_scheduled_tests_paper_id on public.scheduled_tests using btree (paper_id) TABLESPACE pg_default;
+
+create index IF not exists idx_scheduled_tests_status on public.scheduled_tests using btree (status) TABLESPACE pg_default;
+
+create index IF not exists idx_scheduled_tests_scheduled_at on public.scheduled_tests using btree (scheduled_at) TABLESPACE pg_default;
+
+create unique INDEX IF not exists idx_unique_active_otp on public.scheduled_tests using btree (otp) TABLESPACE pg_default
+where
+  (
+    status = any (array['scheduled'::text, 'in_progress'::text])
+  );
 
 
 
