@@ -246,16 +246,27 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
       instruction: section.instruction ?? null,
       content_text: section.content_text ?? null,
       content_type: section.content_type ?? null,
-      resource_url: section.resource_url ?? null,
+      // Ensure resource_url is properly handled for audio/image
+      resource_url: section.resource_url
+        ? section.resource_url.startsWith("http")
+          ? section.resource_url
+          : `${section.resource_url}`
+        : null,
       section_index: section.section_index ?? 0,
       subtext: section.subtext ?? null,
       subsections: (section.sub_sections || section.subsections || []).map(
-        (subSection: any) => ({
+        (subSection: any, idx: number) => ({
           id: subSection.id,
           content_template: subSection.content_template ?? null,
           sub_type: subSection.sub_type ?? null,
-          resource_url: subSection.resource_url ?? null,
+          // Ensure resource_url is properly handled for audio/image
+          resource_url: subSection.resource_url
+            ? subSection.resource_url.startsWith("http")
+              ? subSection.resource_url
+              : `${subSection.resource_url}`
+            : null,
           boundary_text: subSection.boundary_text ?? null,
+          sub_section_index: subSection.sub_section_index ?? idx + 1,
           questions: (subSection.questions || []).map((q: any) => ({
             id: q.id,
             question_ref: q.question_ref,
@@ -522,6 +533,13 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
 
               if (attemptError) throw attemptError;
 
+              // Check if paper exists
+              if (!attempt.paper || !attempt.paper.id) {
+                throw new Error(
+                  "This test session does not have an associated paper. Please contact your administrator.",
+                );
+              }
+
               const paperId = attempt.paper.id;
               sessionStorage.setItem("paperId", paperId);
 
@@ -651,6 +669,14 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
             (payload.modules || []).forEach((mod) => {
               sessionStorage.setItem(`${mod.module_type}ModuleId`, mod.id);
             });
+
+            // Cache the successful payload
+            const payloadCacheKey = `exam_payload_${attemptId}`;
+            try {
+              localStorage.setItem(payloadCacheKey, JSON.stringify(payload));
+            } catch (e) {
+              console.warn("Failed to cache exam payload:", e);
+            }
 
             setState((prev) => ({
               ...prev,

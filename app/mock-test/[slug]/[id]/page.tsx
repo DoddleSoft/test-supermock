@@ -17,6 +17,7 @@ import {
   AlertCircle,
   Flag,
 } from "lucide-react";
+import { CentreProvider } from "@/context/CenterContext";
 
 function WaitingRoom() {
   const router = useRouter();
@@ -35,6 +36,7 @@ function WaitingRoom() {
       return;
     }
 
+    // Prevent duplicate loads
     if (lastAttemptRef.current === attemptId) {
       return;
     }
@@ -53,12 +55,13 @@ function WaitingRoom() {
         }, 500);
       } catch (err) {
         console.error("Failed to load exam:", err);
-        toast.error("Failed to load test data");
+        // Don't call toast here if error is already set in context
+        // The error state will be displayed by the error UI
       }
     };
 
     init();
-  }, [params.id, loadExam, router]);
+  }, [params.id]); // Removed loadExam and router from dependencies to prevent loops
 
   const getModuleIcon = (type: string) => {
     switch (type) {
@@ -124,7 +127,7 @@ function WaitingRoom() {
           </h2>
           <p className="text-gray-600 mb-6">{error}</p>
           <button
-            onClick={() => router.push("/mock-test")}
+            onClick={() => router.push(`/mock-test/${params.slug}`)}
             className="w-full py-3 px-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-semibold rounded-xl transition-all duration-200"
           >
             Return to Tests
@@ -619,9 +622,62 @@ function ExamContent() {
                 {currentSection.content_type === "audio" &&
                   currentSection.resource_url && (
                     <div className="mb-8">
-                      <audio controls className="w-full">
-                        <source src={currentSection.resource_url} />
-                      </audio>
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <audio
+                          controls
+                          className="w-full"
+                          onError={(e) => {
+                            console.error(
+                              "Audio loading error:",
+                              currentSection.resource_url,
+                            );
+                            e.currentTarget.parentElement!.innerHTML =
+                              '<p class="text-red-600 text-sm">Failed to load audio. Please check the file path or contact support.</p>';
+                          }}
+                        >
+                          <source
+                            src={currentSection.resource_url}
+                            type="audio/mpeg"
+                          />
+                          <source
+                            src={currentSection.resource_url}
+                            type="audio/mp3"
+                          />
+                          <source
+                            src={currentSection.resource_url}
+                            type="audio/wav"
+                          />
+                          Your browser does not support the audio element.
+                        </audio>
+                      </div>
+                    </div>
+                  )}
+
+                {currentSection.content_type === "image" &&
+                  currentSection.resource_url && (
+                    <div className="mb-8">
+                      <div className="bg-gray-50 rounded-lg p-4">
+                        <img
+                          src={currentSection.resource_url}
+                          alt={currentSection.title || "Section image"}
+                          className="max-w-full h-auto rounded"
+                          onError={(e) => {
+                            console.error(
+                              "Image loading error:",
+                              currentSection.resource_url,
+                            );
+                            e.currentTarget.alt = "Failed to load image";
+                            e.currentTarget.className = "hidden";
+                            const errorMsg = document.createElement("p");
+                            errorMsg.className = "text-red-600 text-sm";
+                            errorMsg.textContent =
+                              "Failed to load image. Please check the file path or contact support.";
+                            e.currentTarget.parentElement!.appendChild(
+                              errorMsg,
+                            );
+                          }}
+                        />
+                      </div>
                     </div>
                   )}
 

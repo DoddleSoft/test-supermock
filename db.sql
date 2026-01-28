@@ -385,6 +385,8 @@ create table public.sub_sections (
   sub_type text null,
   content_template text not null,
   resource_url text null,
+  instruction text null,
+  sub_section_index integer not null default 0,
   created_at timestamp with time zone null default now(),
   updated_at timestamp with time zone null default now(),
   constraint sub_sections_pkey primary key (id),
@@ -392,6 +394,8 @@ create table public.sub_sections (
 ) TABLESPACE pg_default;
 
 create index IF not exists idx_sub_sections_section_id on public.sub_sections using btree (section_id) TABLESPACE pg_default;
+
+create index IF not exists idx_sub_sections_section_idx on public.sub_sections using btree (section_id, sub_section_index) TABLESPACE pg_default;
 
 
 create table public.support_requests (

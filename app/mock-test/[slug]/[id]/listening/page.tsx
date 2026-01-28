@@ -23,16 +23,12 @@ function ListeningTestPage() {
     loadExam,
     loadModule,
     submitAnswer,
-    startTimer,
-    isLoading,
   } = useExam();
 
   const [isStarted, setIsStarted] = useState(false);
-  const [selectedSection, setSelectedSection] = useState<number | null>(1);
   const [isPlaying, setIsPlaying] = useState(false);
   const [moduleLoaded, setModuleLoaded] = useState(false);
   const examLoadedRef = useRef(false);
-  const timerStartedRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
@@ -77,13 +73,6 @@ function ListeningTestPage() {
         setModuleLoaded(true);
       });
   }, [params.id, router, modules, loadModule, moduleLoaded, loadExam]);
-
-  useEffect(() => {
-    if (isStarted && !timerStartedRef.current) {
-      timerStartedRef.current = true;
-      startTimer(30);
-    }
-  }, [isStarted, startTimer]);
 
   const currentSection = sections[currentSectionIndex];
   const sectionSubSections = subSections.filter(
@@ -222,81 +211,6 @@ function ListeningTestPage() {
       };
     }
   }, [currentSectionIndex, isStarted]);
-
-  if (!isStarted) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-white">
-        <div className="w-full max-w-5xl lg:max-w-7xl rounded-2xl bg-white p-12">
-          <div className="flex items-start justify-between">
-            <div className="flex gap-6 items-center">
-              <div className="flex h-20 w-20 items-center justify-center rounded-full bg-blue-50">
-                <Headphones className="h-8 w-8 text-blue-600" />
-              </div>
-              <div>
-                <h1 className="mb-2 text-center text-3xl font-bold text-gray-900">
-                  Listening Test
-                </h1>
-                <p className="text-center text-lg text-gray-600">
-                  {sectionMeta.length} sections • 30 minutes
-                </p>
-              </div>
-            </div>
-
-            <div className="rounded-lg bg-gray-50 p-6">
-              <h2 className="mb-3 font-semibold text-gray-900">
-                Instructions:
-              </h2>
-              <ul className="space-y-2 text-sm text-gray-700">
-                <li>• The timer will start automatically when you begin</li>
-                <li>• You cannot pause or restart the test</li>
-                <li>• The audio will play once per section</li>
-              </ul>
-            </div>
-          </div>
-
-          <div className="mb-8">
-            <h2 className="mb-4 font-semibold text-gray-900">
-              Select a section to start:
-            </h2>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {sectionMeta.map((section) => (
-                <button
-                  key={section.id}
-                  onClick={() => setSelectedSection(section.id)}
-                  className={`rounded-lg border-2 p-4 text-left transition-all ${
-                    selectedSection === section.id
-                      ? "border-blue-600 bg-blue-50"
-                      : "border-gray-200 bg-white hover:border-gray-300"
-                  }`}
-                >
-                  <h3 className="font-semibold text-gray-900">
-                    {section.title}
-                  </h3>
-                  <p className="text-sm text-gray-600">{section.description}</p>
-                  <p className="mt-2 text-xs font-medium text-gray-500">
-                    Questions {section.questions}
-                  </p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <button
-            onClick={() => {
-              if (selectedSection) {
-                setIsStarted(true);
-                setCurrentSection(selectedSection - 1);
-              }
-            }}
-            disabled={!selectedSection || isLoading}
-            className="w-full rounded-lg bg-blue-600 px-8 py-4 text-lg font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {selectedSection ? "Start Test" : "Select a section to begin"}
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-white">

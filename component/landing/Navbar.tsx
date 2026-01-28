@@ -117,7 +117,7 @@ export default function Navbar() {
             href="#instructions"
             className="text-md font-semibold cursor-pointer bg-gradient-to-r from-red-400 to-red-700 bg-clip-text text-transparent hover:underline"
           >
-            View Instructions
+            Instructions
           </a>
 
           {/* --- CTA & Mobile Toggle --- */}
@@ -125,9 +125,12 @@ export default function Navbar() {
             <div className="flex gap-4 justify-end">
               {/* CENTER: Center Name */}
 
-              <div className="flex items-center gap-3 pr-4 border-r border-slate-400">
+              <Link
+                href={`/mock-test/${centerSlug}/profile`}
+                className="flex items-center gap-3 pr-2 border-r border-red-400 border-r-2 hover:bg-red-50 cursor-pointer rounded-lg transition-colors px-3 py-2 group"
+              >
                 <div className="text-right">
-                  <p className="text-sm font-medium text-slate-900">
+                  <p className="text-sm font-medium text-slate-900 group-hover:text-red-600 transition-colors">
                     {userProfile?.full_name ||
                       user?.email?.split("@")[0] ||
                       "User"}
@@ -136,14 +139,7 @@ export default function Navbar() {
                     {user?.email || "N/A"}
                   </p>
                 </div>
-              </div>
-
-              <button
-                onClick={handleStartTest}
-                className="hidden sm:block px-4 py-2 md:px-5 text-xs md:text-sm font-semibold text-white transition-all bg-gradient-to-r from-red-600 to-red-900 rounded-lg hover:from-red-700 hover:to-red-800 hover:shadow-sm hover:shadow-red-500/30 active:scale-95"
-              >
-                Start Mock Test
-              </button>
+              </Link>
             </div>
 
             {/* Mobile Toggle Button */}

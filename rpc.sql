@@ -104,6 +104,7 @@ BEGIN
                 'sub_type', ss.sub_type,
                 'content_template', ss.content_template,
                 'resource_url', ss.resource_url,
+                'instruction', ss.instruction,
                 'sub_section_index', ss.sub_section_index,
                 'questions', (
                   SELECT COALESCE(jsonb_agg(
