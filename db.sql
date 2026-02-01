@@ -10,6 +10,7 @@ create table public.attempt_modules (
   band_score numeric(3, 1) null,
   feedback text null,
   created_at timestamp with time zone null default now(),
+  time_remaining_seconds integer null default 0,
   constraint attempt_modules_pkey primary key (id),
   constraint unique_module_per_attempt unique (attempt_id, module_id),
   constraint attempt_modules_attempt_id_fkey foreign KEY (attempt_id) references mock_attempts (id) on delete CASCADE,
@@ -72,8 +73,10 @@ create table public.mock_attempts (
   started_at timestamp with time zone null default now(),
   completed_at timestamp with time zone null,
   created_at timestamp with time zone null default now(),
+  scheduled_test_id uuid null,
   constraint mock_attempts_pkey primary key (id),
   constraint mock_attempts_paper_id_fkey foreign KEY (paper_id) references papers (id) on delete set null,
+  constraint mock_attempts_scheduled_test_id_fkey foreign KEY (scheduled_test_id) references scheduled_tests (id) on delete set null,
   constraint mock_attempts_student_id_fkey foreign KEY (student_id) references student_profiles (student_id) on delete CASCADE,
   constraint mock_attempts_attempt_type_check check (
     (
@@ -141,7 +144,6 @@ create table public.modules (
 create index IF not exists idx_modules_paper_id on public.modules using btree (paper_id) TABLESPACE pg_default;
 
 
-
 create table public.papers (
   id uuid not null default gen_random_uuid (),
   center_id uuid not null,
@@ -175,6 +177,25 @@ create trigger validate_paper_modules BEFORE INSERT
 or
 update on papers for EACH row
 execute FUNCTION check_paper_module_types ();
+
+
+create table public.question_answers (
+  id uuid not null default gen_random_uuid (),
+  sub_section_id uuid null,
+  question_ref text not null,
+  correct_answers jsonb null,
+  options jsonb null,
+  explanation text null,
+  marks double precision null default 1.0,
+  created_at timestamp with time zone null default now(),
+  updated_at timestamp with time zone null default now(),
+  constraint question_answers_pkey primary key (id),
+  constraint question_answers_sub_section_id_fkey foreign KEY (sub_section_id) references sub_sections (id) on delete CASCADE
+) TABLESPACE pg_default;
+
+create unique INDEX IF not exists idx_qa_lookup on public.question_answers using btree (sub_section_id, question_ref) TABLESPACE pg_default;
+
+create index IF not exists idx_qa_sub_section_id on public.question_answers using btree (sub_section_id) TABLESPACE pg_default;
 
 
 create table public.scheduled_tests (
@@ -221,73 +242,8 @@ where
   );
 
 
-create table public.question_answers (
-  id uuid not null default gen_random_uuid (),
-  sub_section_id uuid null,
-  question_ref text not null,
-  correct_answers jsonb null,
-  options jsonb null,
-  explanation text null,
-  marks double precision null default 1.0,
-  created_at timestamp with time zone null default now(),
-  updated_at timestamp with time zone null default now(),
-  constraint question_answers_pkey primary key (id),
-  constraint question_answers_sub_section_id_fkey foreign KEY (sub_section_id) references sub_sections (id) on delete CASCADE
-) TABLESPACE pg_default;
 
-create index IF not exists idx_qa_options on public.question_answers using gin (options) TABLESPACE pg_default;
-
-create index IF not exists idx_qa_sub_section_id on public.question_answers using btree (sub_section_id) TABLESPACE pg_default;
-
-
-
-
-create table public.scheduled_tests (
-  id uuid not null default gen_random_uuid (),
-  center_id uuid not null,
-  paper_id uuid null,
-  title text not null,
-  scheduled_at timestamp with time zone not null,
-  duration_minutes integer null default 180,
-  status text not null default 'scheduled'::text,
-  created_at timestamp with time zone null default now(),
-  updated_at timestamp with time zone null default now(),
-  otp integer null,
-  attendee integer null default 0, -- no of attendees
-  constraint scheduled_tests_pkey primary key (id),
-  constraint scheduled_tests_center_id_fkey foreign KEY (center_id) references centers (center_id) on delete CASCADE,
-  constraint scheduled_tests_paper_id_fkey foreign KEY (paper_id) references papers (id) on delete set null,
-  constraint scheduled_tests_status_check check (
-    (
-      status = any (
-        array[
-          'scheduled'::text,
-          'in_progress'::text,
-          'completed'::text,
-          'cancelled'::text
-        ]
-      )
-    )
-  )
-) TABLESPACE pg_default;
-
-create index IF not exists idx_scheduled_tests_center_id on public.scheduled_tests using btree (center_id) TABLESPACE pg_default;
-
-create index IF not exists idx_scheduled_tests_paper_id on public.scheduled_tests using btree (paper_id) TABLESPACE pg_default;
-
-create index IF not exists idx_scheduled_tests_status on public.scheduled_tests using btree (status) TABLESPACE pg_default;
-
-create index IF not exists idx_scheduled_tests_scheduled_at on public.scheduled_tests using btree (scheduled_at) TABLESPACE pg_default;
-
-create unique INDEX IF not exists idx_unique_active_otp on public.scheduled_tests using btree (otp) TABLESPACE pg_default
-where
-  (
-    status = any (array['scheduled'::text, 'in_progress'::text])
-  );
-
-
-
-create table public.sections (
+  create table public.sections (
   id uuid not null default gen_random_uuid (),
   module_id uuid null,
   title text null,
@@ -312,23 +268,23 @@ create table public.sections (
 create index IF not exists idx_sections_module_id on public.sections using btree (module_id) TABLESPACE pg_default;
 
 
-
 create table public.student_answers (
   id uuid not null default gen_random_uuid (),
   attempt_module_id uuid not null,
-  sub_section_id uuid not null,
+  reference_id uuid not null,
   question_ref text not null,
   student_response text null,
   is_correct boolean null,
   marks_awarded double precision null default 0,
   created_at timestamp with time zone null default now(),
   constraint student_answers_pkey primary key (id),
-  constraint unique_answer_per_module_attempt unique (attempt_module_id, sub_section_id, question_ref),
-  constraint student_answers_attempt_module_id_fkey foreign KEY (attempt_module_id) references attempt_modules (id) on delete CASCADE,
-  constraint student_answers_sub_section_id_fkey foreign KEY (sub_section_id) references sub_sections (id)
+  constraint unique_answer_per_module_attempt unique (attempt_module_id, reference_id, question_ref),
+  constraint student_answers_attempt_module_id_fkey foreign KEY (attempt_module_id) references attempt_modules (id) on delete CASCADE
 ) TABLESPACE pg_default;
 
 create index IF not exists idx_answers_module on public.student_answers using btree (attempt_module_id) TABLESPACE pg_default;
+
+
 
 
 create table public.student_profiles (
@@ -385,17 +341,17 @@ create table public.sub_sections (
   sub_type text null,
   content_template text not null,
   resource_url text null,
-  instruction text null,
-  sub_section_index integer not null default 0,
   created_at timestamp with time zone null default now(),
   updated_at timestamp with time zone null default now(),
+  sub_section_index integer not null default 0,
+  instruction text null,
   constraint sub_sections_pkey primary key (id),
   constraint sub_sections_section_id_fkey foreign KEY (section_id) references sections (id) on delete CASCADE
 ) TABLESPACE pg_default;
 
-create index IF not exists idx_sub_sections_section_id on public.sub_sections using btree (section_id) TABLESPACE pg_default;
-
 create index IF not exists idx_sub_sections_section_idx on public.sub_sections using btree (section_id, sub_section_index) TABLESPACE pg_default;
+
+create index IF not exists idx_sub_sections_section_id on public.sub_sections using btree (section_id) TABLESPACE pg_default;
 
 
 create table public.support_requests (
@@ -438,6 +394,7 @@ create index IF not exists idx_support_requests_created_at on public.support_req
 create trigger update_support_requests_updated_at BEFORE
 update on support_requests for EACH row
 execute FUNCTION update_updated_at_column ();
+
 
 create table public.users (
   user_id uuid not null,

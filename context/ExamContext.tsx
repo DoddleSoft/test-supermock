@@ -186,31 +186,131 @@ interface RpcExamPayload {
   modules: RpcModule[];
 }
 
-export function ExamProvider({ children }: { children: React.ReactNode }) {
-  const { studentId } = useAuth();
-  const [state, setState] = useState<ExamState>({
-    attemptId: null,
-    paperId: null,
-    modules: [],
-    currentModuleId: null,
-    currentModule: null,
-    currentAttemptModule: null,
-    sections: [],
-    currentSectionIndex: 0,
-    currentSection: null,
-    subSections: [],
-    questionAnswers: [],
-    answers: new Map(),
-    moduleContentMap: {},
-    isLoading: false,
-    isSaving: false,
-    error: null,
-    timeLeft: 0,
-    isTimerRunning: false,
-    totalQuestions: 0,
-    answeredQuestions: 0,
-    flaggedQuestions: [],
-    completionPercentage: 0,
+interface ExamProviderProps {
+  children: React.ReactNode;
+  attemptId?: string;
+  studentId?: string;
+  paperId?: string;
+  serverData?: {
+    // Make these optional so it handles both structures
+    paper?: any;
+    modules?: Record<string, any>;
+    // Add these to match what page.tsx is sending
+    paperData?: {
+      modules?: Record<string, any>;
+      [key: string]: any;
+    };
+    attemptData?: any;
+  };
+}
+
+export function ExamProvider({
+  children,
+  attemptId: initialAttemptId,
+  studentId: initialStudentId,
+  paperId: initialPaperId,
+  serverData,
+}: ExamProviderProps) {
+  const { studentId: authStudentId } = useAuth();
+
+  // Use initial values from props or auth context
+  const resolvedStudentId = initialStudentId || authStudentId;
+
+  // Initialize state with server data if available
+  const [state, setState] = useState<ExamState>(() => {
+    if (serverData && initialAttemptId && initialPaperId) {
+      // Transform server data to module format
+      const modulesArray = Object.values(
+        serverData.modules || serverData.paperData?.modules || {},
+      ).map((module: any) => ({
+        id: module.id,
+        module_type: module.module_type,
+        heading: module.heading ?? null,
+        subheading: module.subheading ?? null,
+        instruction: module.instruction ?? null,
+      }));
+
+      // Build module content map
+      const contentMap: Record<string, RpcSection[]> = {};
+      Object.values(
+        serverData.modules || serverData.paperData?.modules || {},
+      ).forEach((module: any) => {
+        contentMap[module.id] = (module.sections || []).map((section: any) => ({
+          id: section.id,
+          title: section.title ?? null,
+          instruction: section.instruction ?? null,
+          content_text: section.content_text ?? null,
+          content_type: section.content_type ?? null,
+          resource_url: section.resource_url ?? null,
+          section_index: section.section_index ?? 0,
+          subtext: section.subtext ?? null,
+          subsections: (section.sub_sections || []).map((subSection: any) => ({
+            id: subSection.id,
+            content_template: subSection.content_template ?? null,
+            sub_type: subSection.sub_type ?? null,
+            resource_url: subSection.resource_url ?? null,
+            boundary_text: subSection.boundary_text ?? null,
+            sub_section_index: subSection.sub_section_index ?? 0,
+            questions: (subSection.questions || []).map((q: any) => ({
+              id: q.id,
+              question_ref: q.question_ref,
+              options: q.options ?? null,
+              marks: q.marks ?? 1,
+            })),
+          })),
+        }));
+      });
+
+      return {
+        attemptId: initialAttemptId,
+        paperId: initialPaperId,
+        modules: modulesArray,
+        currentModuleId: null,
+        currentModule: null,
+        currentAttemptModule: null,
+        sections: [],
+        currentSectionIndex: 0,
+        currentSection: null,
+        subSections: [],
+        questionAnswers: [],
+        answers: new Map(),
+        moduleContentMap: contentMap,
+        isLoading: false,
+        isSaving: false,
+        error: null,
+        timeLeft: 0,
+        isTimerRunning: false,
+        totalQuestions: 0,
+        answeredQuestions: 0,
+        flaggedQuestions: [],
+        completionPercentage: 0,
+      };
+    }
+
+    return {
+      attemptId: null,
+      paperId: null,
+      modules: [],
+      currentModuleId: null,
+      currentModule: null,
+      currentAttemptModule: null,
+      sections: [],
+      currentSectionIndex: 0,
+      currentSection: null,
+      subSections: [],
+      questionAnswers: [],
+      answers: new Map(),
+      moduleContentMap: {},
+      isLoading: false,
+      isSaving: false,
+      error: null,
+      timeLeft: 0,
+      isTimerRunning: false,
+      totalQuestions: 0,
+      answeredQuestions: 0,
+      flaggedQuestions: [],
+      completionPercentage: 0,
+    };
   });
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -224,12 +324,18 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
     });
 
   const resolveStudentId = async (): Promise<string | null> => {
-    let resolved = studentId || sessionStorage.getItem("studentId");
+    // Use the resolved student ID from props if available
+    if (resolvedStudentId) {
+      sessionStorage.setItem("studentId", resolvedStudentId);
+      return resolvedStudentId;
+    }
+
+    let resolved = sessionStorage.getItem("studentId");
     if (resolved) return resolved;
 
     for (let i = 0; i < 10; i++) {
       await wait(150);
-      resolved = studentId || sessionStorage.getItem("studentId");
+      resolved = authStudentId || sessionStorage.getItem("studentId");
       if (resolved) return resolved;
     }
     return null;
@@ -368,12 +474,189 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state.answers, state.attemptId, state.currentModuleId]);
 
-  // Timer logic
+  // --- MOVED UP: Save progress to database (Must be defined before use in debouncedSave and submitModule) ---
+  const saveProgress = useCallback(async () => {
+    if (!state.currentAttemptModule || state.answers.size === 0) return;
+
+    try {
+      setState((prev) => ({ ...prev, isSaving: true }));
+
+      const answersToSave = Array.from(state.answers.values()).map((ans) => ({
+        attempt_module_id: state.currentAttemptModule!.id,
+        reference_id: ans.sub_section_id,
+        question_ref: ans.question_ref,
+        student_response:
+          typeof ans.student_response === "string"
+            ? ans.student_response
+            : JSON.stringify(ans.student_response),
+      }));
+
+      // Batch upsert all answers in one query
+      const { error } = await supabase
+        .from("student_answers")
+        .upsert(answersToSave, {
+          onConflict: "attempt_module_id,reference_id,question_ref",
+        });
+
+      if (error) throw error;
+
+      setState((prev) => ({ ...prev, isSaving: false }));
+    } catch (error: any) {
+      console.error("Error saving progress:", error);
+      setState((prev) => ({ ...prev, isSaving: false }));
+    }
+  }, [state.currentAttemptModule, state.answers, supabase]);
+
+  // Debounced save function (Now saveProgress is defined)
+  const debouncedSave = useCallback(
+    debounce(async () => {
+      await saveProgress();
+    }, 2000),
+    [saveProgress],
+  );
+
+  // --- MOVED UP: Submit module (Must be defined before use in Timer useEffect) ---
+  const submitModule = useCallback(async (): Promise<{
+    success: boolean;
+    totalScore?: number;
+    maxScore?: number;
+    bandScore?: number;
+    error?: string;
+  }> => {
+    if (!state.currentAttemptModule) {
+      return { success: false, error: "No module loaded" };
+    }
+
+    try {
+      setState((prev) => ({ ...prev, isLoading: true }));
+
+      // 1. Final sync of timer to database
+      await supabase
+        .from("attempt_modules")
+        .update({
+          time_remaining_seconds: state.timeLeft,
+        })
+        .eq("id", state.currentAttemptModule.id);
+
+      // 2. Batch insert all answers to database
+      if (state.answers.size > 0) {
+        const answersToSave = Array.from(state.answers.values()).map((ans) => ({
+          attempt_module_id: state.currentAttemptModule!.id,
+          reference_id: ans.sub_section_id,
+          question_ref: ans.question_ref,
+          student_response:
+            typeof ans.student_response === "string"
+              ? ans.student_response
+              : JSON.stringify(ans.student_response),
+        }));
+
+        const { error: answersError } = await supabase
+          .from("student_answers")
+          .upsert(answersToSave, {
+            onConflict: "attempt_module_id,reference_id,question_ref",
+          });
+
+        if (answersError) throw answersError;
+      }
+
+      // 3. Import the submitModule helper for evaluation
+      const { submitModule: submitModuleHelper } =
+        await import("@/helpers/answers");
+
+      // 4. Submit and evaluate
+      const result = await submitModuleHelper(state.currentAttemptModule.id);
+
+      if (!result.success) {
+        throw new Error(result.error || "Failed to submit module");
+      }
+
+      // 5. Update attempt_module status to completed
+      const { error: updateError } = await supabase
+        .from("attempt_modules")
+        .update({
+          status: "completed",
+          completed_at: new Date().toISOString(),
+          band_score: result.bandScore || null,
+          score_obtained: result.totalScore || 0,
+          time_remaining_seconds: 0,
+        })
+        .eq("id", state.currentAttemptModule.id);
+
+      if (updateError) throw updateError;
+
+      // 6. Clear localStorage for this module
+      const localKey = `exam_${state.attemptId}_${state.currentModuleId}`;
+      localStorage.removeItem(localKey);
+
+      // Clear answer storage
+      if (state.attemptId) {
+        const answerStorageKey = `exam_answers_${state.attemptId}`;
+        localStorage.removeItem(answerStorageKey);
+      }
+
+      // 7. Stop timer
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+
+      setState((prev) => ({
+        ...prev,
+        isLoading: false,
+        isTimerRunning: false,
+        answers: new Map(), // Clear answers from state
+      }));
+
+      return result;
+    } catch (error: any) {
+      console.error("Error submitting module:", error);
+      setState((prev) => ({
+        ...prev,
+        isLoading: false,
+        error: error.message,
+      }));
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }, [
+    state.currentAttemptModule,
+    state.attemptId,
+    state.currentModuleId,
+    state.answers,
+    state.timeLeft,
+    supabase,
+  ]);
+
+  // Timer logic with database sync
   useEffect(() => {
     if (state.isTimerRunning && state.timeLeft > 0) {
+      let tickCount = 0;
+      const SYNC_INTERVAL = 10; // Sync to DB every 10 seconds
+
       timerRef.current = setInterval(() => {
         setState((prev) => {
           const newTime = prev.timeLeft - 1;
+          tickCount++;
+
+          // Sync to database every SYNC_INTERVAL seconds
+          if (tickCount >= SYNC_INTERVAL && prev.currentAttemptModule?.id) {
+            tickCount = 0;
+            // Async update without blocking
+            supabase
+              .from("attempt_modules")
+              .update({
+                time_remaining_seconds: newTime,
+                time_spent_seconds:
+                  (prev.currentAttemptModule.time_spent_seconds || 0) +
+                  SYNC_INTERVAL,
+              })
+              .eq("id", prev.currentAttemptModule.id)
+              .then(({ error }) => {
+                if (error) console.error("Timer sync error:", error);
+              });
+          }
+
           if (newTime <= 0) {
             // Auto-submit when timer expires
             submitModule();
@@ -384,22 +667,35 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
       }, 1000);
     }
 
+    // Cleanup: sync final time to database on unmount or timer stop
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
+
+        // Final sync to database
+        if (state.currentAttemptModule?.id && state.timeLeft > 0) {
+          supabase
+            .from("attempt_modules")
+            .update({
+              time_remaining_seconds: state.timeLeft,
+              time_spent_seconds:
+                state.currentAttemptModule.time_spent_seconds || 0,
+            })
+            .eq("id", state.currentAttemptModule.id)
+            .then(({ error }) => {
+              if (error) console.error("Final timer sync error:", error);
+            });
+        }
       }
     };
-  }, [state.isTimerRunning, state.timeLeft]);
+  }, [
+    state.isTimerRunning,
+    state.currentAttemptModule?.id,
+    submitModule,
+    supabase,
+  ]);
 
-  // Debounced save function
-  const debouncedSave = useCallback(
-    debounce(async () => {
-      await saveProgress();
-    }, 2000),
-    [state.answers, state.attemptId, state.currentAttemptModule],
-  );
-
-  // Load exam data
+  // Load exam data (Fixed broken syntax and missing closing blocks)
   const loadExam = useCallback(
     async (attemptId: string) => {
       if (loadExamInFlight.current) return;
@@ -487,170 +783,43 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
             let rpcData: any = null;
             let rpcError: any = null;
 
-            ({ data: rpcData, error: rpcError } = await supabase.rpc(
-              "get_all_modules_for_attempt",
-              {
-                p_mock_attempt_id: attemptId,
-                p_student_id: resolvedStudentId,
-              },
-            ));
+            // Use new load_paper_with_modules RPC
+            const { data: paperData, error: paperError } = await supabase.rpc(
+              "load_paper_with_modules",
+              { p_paper_id: sessionStorage.getItem("paperId") },
+            );
 
-            if (!rpcError && rpcData?.modules) {
-              const modulesArray = [
-                rpcData.modules.reading,
-                rpcData.modules.listening,
-                rpcData.modules.writing,
-                rpcData.modules.speaking,
-              ]
-                .filter(Boolean)
-                .map(normalizeModule);
-
-              if (!modulesArray.length) {
-                throw new Error("No modules available for this attempt.");
-              }
-
-              payload = {
-                paper: {
-                  id: rpcData.paper_id,
-                  title: rpcData.title ?? null,
-                  instruction: rpcData.instruction ?? null,
-                  paper_type: rpcData.paper_type ?? null,
-                },
-                modules: modulesArray,
-              };
-            } else {
-              console.warn(
-                "RPC fetch failed, building from direct queries:",
-                rpcError,
+            if (paperError || !paperData) {
+              throw new Error(
+                `Failed to load exam modules. ${paperError?.message || "No data returned from server."}`,
               );
-
-              // Fallback to direct queries if RPC fails
-              const { data: attempt, error: attemptError } = await supabase
-                .from("mock_attempts")
-                .select("*, paper:papers(*)")
-                .eq("id", attemptId)
-                .single();
-
-              if (attemptError) throw attemptError;
-
-              // Check if paper exists
-              if (!attempt.paper || !attempt.paper.id) {
-                throw new Error(
-                  "This test session does not have an associated paper. Please contact your administrator.",
-                );
-              }
-
-              const paperId = attempt.paper.id;
-              sessionStorage.setItem("paperId", paperId);
-
-              const moduleIds = [
-                attempt.paper.reading_module_id,
-                attempt.paper.listening_module_id,
-                attempt.paper.writing_module_id,
-                attempt.paper.speaking_module_id,
-              ].filter(Boolean);
-
-              if (moduleIds.length === 0) {
-                throw new Error("No modules are linked to this paper.");
-              }
-
-              const { data: dbModules, error: modulesError } = await supabase
-                .from("modules")
-                .select("*")
-                .in("id", moduleIds);
-
-              if (modulesError) throw modulesError;
-
-              const { data: sections, error: sectionsError } = await supabase
-                .from("sections")
-                .select("*")
-                .in("module_id", moduleIds)
-                .order("section_index");
-
-              if (sectionsError) throw sectionsError;
-
-              const sectionIds = sections?.map((s) => s.id) || [];
-              const subSectionsResult = sectionIds.length
-                ? await supabase
-                    .from("sub_sections")
-                    .select("*")
-                    .in("section_id", sectionIds)
-                : { data: [], error: null };
-
-              if (subSectionsResult.error) throw subSectionsResult.error;
-
-              const subSections = subSectionsResult.data || [];
-              const subSectionIds = subSections.map((ss) => ss.id);
-              const questionsResult = subSectionIds.length
-                ? await supabase
-                    .from("question_answers")
-                    .select("*")
-                    .in("sub_section_id", subSectionIds)
-                : { data: [], error: null };
-
-              if (questionsResult.error) throw questionsResult.error;
-
-              const questions = questionsResult.data || [];
-
-              const modulesData = (dbModules || []).map((m) => {
-                const moduleSections = (sections || [])
-                  .filter((s) => s.module_id === m.id)
-                  .map((s) => ({
-                    id: s.id,
-                    title: s.title,
-                    instruction: s.instruction,
-                    content_text: s.content_text,
-                    content_type: s.content_type,
-                    resource_url: s.resource_url,
-                    section_index: s.section_index,
-                    subtext: s.subtext,
-                    subsections: (subSections || [])
-                      .filter((ss) => ss.section_id === s.id)
-                      .map((ss) => ({
-                        id: ss.id,
-                        content_template: ss.content_template,
-                        sub_type: ss.sub_type,
-                        resource_url: ss.resource_url,
-                        boundary_text: ss.boundary_text,
-                        questions: (questions || [])
-                          .filter((q) => q.sub_section_id === ss.id)
-                          .map((q) => ({
-                            id: q.id,
-                            question_ref: q.question_ref,
-                            options: q.options,
-                            marks: q.marks,
-                          })),
-                      })),
-                  }));
-
-                return {
-                  id: m.id,
-                  module_type: m.module_type,
-                  heading: m.heading,
-                  instruction: m.instruction,
-                  sections: moduleSections,
-                };
-              });
-
-              payload = {
-                paper: {
-                  id: attempt.paper.id,
-                  title: attempt.paper.title,
-                  instruction: attempt.paper.instruction,
-                  paper_type: attempt.paper.paper_type,
-                },
-                modules: modulesData,
-              };
             }
 
-            if (!payload?.modules?.length) {
-              throw new Error("No modules available for this attempt.");
+            // Check for modules
+            const modulesObj = paperData.modules || {};
+            const modulesArray = [
+              modulesObj.reading,
+              modulesObj.listening,
+              modulesObj.writing,
+              modulesObj.speaking,
+            ]
+              .filter(Boolean)
+              .map(normalizeModule);
+
+            if (!modulesArray.length) {
+              setState((prev) => ({
+                ...prev,
+                isLoading: false,
+                error:
+                  "No modules available for this exam. Please contact your administrator.",
+              }));
+              return;
             }
 
-            const moduleIds = payload.modules.map((mod) => mod.id);
+            const moduleIds = modulesArray.map((mod) => mod.id);
             await ensureAttemptModules(attemptId, moduleIds);
 
-            const moduleContentMap = (payload.modules || []).reduce(
+            const moduleContentMap = modulesArray.reduce(
               (acc, mod) => {
                 acc[mod.id] = mod.sections || [];
                 return acc;
@@ -658,7 +827,7 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
               {} as Record<string, RpcSection[]>,
             );
 
-            const modules = (payload.modules || []).map((mod) => ({
+            const modules = modulesArray.map((mod) => ({
               id: mod.id,
               module_type: mod.module_type,
               heading: mod.heading ?? null,
@@ -666,14 +835,20 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
               instruction: mod.instruction ?? null,
             }));
 
-            (payload.modules || []).forEach((mod) => {
+            modulesArray.forEach((mod) => {
               sessionStorage.setItem(`${mod.module_type}ModuleId`, mod.id);
             });
 
             // Cache the successful payload
             const payloadCacheKey = `exam_payload_${attemptId}`;
             try {
-              localStorage.setItem(payloadCacheKey, JSON.stringify(payload));
+              localStorage.setItem(
+                payloadCacheKey,
+                JSON.stringify({
+                  paper: paperData.paper,
+                  modules: modulesArray,
+                }),
+              );
             } catch (e) {
               console.warn("Failed to cache exam payload:", e);
             }
@@ -681,7 +856,7 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
             setState((prev) => ({
               ...prev,
               attemptId,
-              paperId: payload.paper?.id || null,
+              paperId: paperData.paper?.id || null,
               modules,
               moduleContentMap,
               isLoading: false,
@@ -709,8 +884,24 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
         loadExamInFlight.current = false;
       }
     },
-    [supabase, state.attemptId, state.modules.length, studentId],
+    [supabase, state.attemptId, state.modules.length, resolvedStudentId],
   );
+
+  // Get module duration based on type
+  const getModuleDuration = (moduleType: string): number => {
+    switch (moduleType) {
+      case "listening":
+        return 30 * 60; // 30 minutes in seconds
+      case "reading":
+        return 60 * 60; // 60 minutes in seconds
+      case "writing":
+        return 60 * 60; // 60 minutes in seconds
+      case "speaking":
+        return 15 * 60; // 15 minutes in seconds
+      default:
+        return 60 * 60; // Default 60 minutes
+    }
+  };
 
   // Load specific module
   const loadModule = useCallback(
@@ -732,8 +923,10 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
         if (attemptModuleError) throw attemptModuleError;
 
         let attemptModule = maybeAttemptModule;
+        const moduleDuration = getModuleDuration(module.module_type);
 
         if (!attemptModule) {
+          // Create new attempt_module with proper initial time
           const { data: createdAttemptModule, error: createError } =
             await supabase
               .from("attempt_modules")
@@ -741,7 +934,8 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
                 attempt_id: state.attemptId,
                 module_id: moduleId,
                 status: "pending",
-                time_remaining_seconds: 0,
+                time_remaining_seconds: moduleDuration,
+                time_spent_seconds: 0,
               })
               .select("*")
               .single();
@@ -824,17 +1018,22 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
 
         // Update attempt_module status to in_progress if pending
         if (attemptModule.status === "pending") {
+          const now = new Date().toISOString();
           await supabase
             .from("attempt_modules")
             .update({
               status: "in_progress",
-              started_at: new Date().toISOString(),
+              started_at: now,
             })
             .eq("id", attemptModule.id);
 
           attemptModule.status = "in_progress";
-          attemptModule.started_at = new Date().toISOString();
+          attemptModule.started_at = now;
         }
+
+        // Initialize timer with remaining time from database
+        const timeToSet =
+          attemptModule.time_remaining_seconds || moduleDuration;
 
         setState((prev) => ({
           ...prev,
@@ -848,6 +1047,8 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
           questionAnswers: questionAnswers || [],
           answers: answersMap,
           totalQuestions: questionAnswers?.length || 0,
+          timeLeft: timeToSet,
+          isTimerRunning: attemptModule.status === "in_progress",
           isLoading: false,
         }));
       } catch (error: any) {
@@ -863,169 +1064,89 @@ export function ExamProvider({ children }: { children: React.ReactNode }) {
   );
 
   // Set current section
-  const setCurrentSection = (index: number) => {
-    if (index >= 0 && index < state.sections.length) {
-      setState((prev) => ({
-        ...prev,
-        currentSectionIndex: index,
-        currentSection: prev.sections[index],
-      }));
-    }
-  };
-
-  // Submit answer
-  const submitAnswer = (
-    questionRef: string,
-    subSectionId: string,
-    response: string | string[],
-  ) => {
-    const key = `${subSectionId}_${questionRef}`;
-    const newAnswers = new Map(state.answers);
-
-    newAnswers.set(key, {
-      question_ref: questionRef,
-      sub_section_id: subSectionId,
-      student_response: response,
-      timestamp: Date.now(),
-      is_flagged: newAnswers.get(key)?.is_flagged || false,
+  const setCurrentSection = useCallback((index: number) => {
+    setState((prev) => {
+      if (index >= 0 && index < prev.sections.length) {
+        return {
+          ...prev,
+          currentSectionIndex: index,
+          currentSection: prev.sections[index],
+        };
+      }
+      return prev;
     });
+  }, []); // No dependencies needed due to functional update
+  // Submit answer
+  const submitAnswer = useCallback(
+    (
+      questionRef: string,
+      subSectionId: string,
+      response: string | string[],
+    ) => {
+      // Use functional update to access the *current* answers without adding state.answers to dependency array
+      setState((prev) => {
+        const key = `${subSectionId}_${questionRef}`;
+        const newAnswers = new Map(prev.answers); // Create copy from prev state
 
-    setState((prev) => ({ ...prev, answers: newAnswers }));
-    debouncedSave();
-  };
+        newAnswers.set(key, {
+          question_ref: questionRef,
+          sub_section_id: subSectionId,
+          student_response: response,
+          timestamp: Date.now(),
+          is_flagged: newAnswers.get(key)?.is_flagged || false,
+        });
+
+        return { ...prev, answers: newAnswers };
+      });
+
+      debouncedSave();
+    },
+    [debouncedSave], // Only depends on the debounced function
+  );
 
   // Toggle flag
-  const toggleFlag = (questionRef: string, subSectionId: string) => {
-    const key = `${subSectionId}_${questionRef}`;
-    const newAnswers = new Map(state.answers);
-    const existing = newAnswers.get(key);
+  const toggleFlag = useCallback(
+    (questionRef: string, subSectionId: string) => {
+      setState((prev) => {
+        const key = `${subSectionId}_${questionRef}`;
+        const newAnswers = new Map(prev.answers);
+        const existing = newAnswers.get(key);
 
-    if (existing) {
-      existing.is_flagged = !existing.is_flagged;
-      newAnswers.set(key, existing);
-    } else {
-      newAnswers.set(key, {
-        question_ref: questionRef,
-        sub_section_id: subSectionId,
-        student_response: "",
-        timestamp: Date.now(),
-        is_flagged: true,
+        if (existing) {
+          existing.is_flagged = !existing.is_flagged;
+          newAnswers.set(key, existing);
+        } else {
+          newAnswers.set(key, {
+            question_ref: questionRef,
+            sub_section_id: subSectionId,
+            student_response: "",
+            timestamp: Date.now(),
+            is_flagged: true,
+          });
+        }
+
+        return { ...prev, answers: newAnswers };
       });
-    }
-
-    setState((prev) => ({ ...prev, answers: newAnswers }));
-  };
+    },
+    [],
+  );
 
   // Start timer
-  const startTimer = (durationMinutes: number) => {
+  const startTimer = useCallback((durationMinutes: number) => {
     setState((prev) => ({
       ...prev,
       timeLeft: durationMinutes * 60,
       isTimerRunning: true,
     }));
-  };
+  }, []);
 
   // Stop timer
-  const stopTimer = () => {
+  const stopTimer = useCallback(() => {
     setState((prev) => ({ ...prev, isTimerRunning: false }));
     if (timerRef.current) {
       clearInterval(timerRef.current);
     }
-  };
-
-  // Save progress to database
-  const saveProgress = async () => {
-    if (!state.currentAttemptModule || state.answers.size === 0) return;
-
-    try {
-      setState((prev) => ({ ...prev, isSaving: true }));
-
-      const answersToSave = Array.from(state.answers.values()).map((ans) => ({
-        attempt_module_id: state.currentAttemptModule!.id,
-        sub_section_id: ans.sub_section_id,
-        question_ref: ans.question_ref,
-        student_response: JSON.stringify(ans.student_response),
-      }));
-
-      // Upsert answers
-      const { error } = await supabase
-        .from("student_answers")
-        .upsert(answersToSave, {
-          onConflict: "attempt_module_id,sub_section_id,question_ref",
-        });
-
-      if (error) throw error;
-
-      setState((prev) => ({ ...prev, isSaving: false }));
-    } catch (error: any) {
-      console.error("Error saving progress:", error);
-      setState((prev) => ({ ...prev, isSaving: false }));
-    }
-  };
-
-  // Submit module
-  const submitModule = async (): Promise<{
-    success: boolean;
-    totalScore?: number;
-    maxScore?: number;
-    bandScore?: number;
-    error?: string;
-  }> => {
-    if (!state.currentAttemptModule) {
-      return { success: false, error: "No module loaded" };
-    }
-
-    try {
-      setState((prev) => ({ ...prev, isLoading: true }));
-
-      // Import the submitModule helper
-      const { submitModule: submitModuleHelper } =
-        await import("@/helpers/answers");
-
-      // Save final answers first
-      await saveProgress();
-
-      // Submit and evaluate
-      const result = await submitModuleHelper(state.currentAttemptModule.id);
-
-      if (!result.success) {
-        throw new Error(result.error || "Failed to submit module");
-      }
-
-      // Update attempt_module status locally
-      const { error: updateError } = await supabase
-        .from("attempt_modules")
-        .update({
-          status: "completed",
-          completed_at: new Date().toISOString(),
-          band_score: result.bandScore || null,
-        })
-        .eq("id", state.currentAttemptModule.id);
-
-      if (updateError) throw updateError;
-
-      // Clear localStorage
-      const key = `exam_${state.attemptId}_${state.currentModuleId}`;
-      localStorage.removeItem(key);
-
-      stopTimer();
-
-      setState((prev) => ({ ...prev, isLoading: false }));
-
-      return result;
-    } catch (error: any) {
-      console.error("Error submitting module:", error);
-      setState((prev) => ({
-        ...prev,
-        isLoading: false,
-        error: error.message,
-      }));
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
-  };
+  }, []);
 
   return (
     <ExamContext.Provider

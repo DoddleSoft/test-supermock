@@ -144,42 +144,101 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
           </span>,
         );
       } else if (inputType === "mcq") {
-        // UPDATED: No longer requires `&& qData?.options` to render the select.
-        // It checks inside the select if options exist.
+        // Check if options are single characters (A, B, C) or longer text
         const hasOptions = qData?.options && qData.options.length > 0;
 
-        parts.push(
-          <span key={`q-${qNum}`} className="inline-flex items-center gap-1">
-            {showQuestionNumbers && (
-              <span className="text-xs font-semibold text-gray-600">
-                {qNum}.
-              </span>
-            )}
-            <select
-              value={answers[qNum] || ""}
-              onChange={(e) => onAnswerChange(qNum, e.target.value)}
-              className={`mx-1 inline-block min-w-[140px] rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-1 ${colors.focus}`}
-            >
-              <option value="">Select...</option>
-              {hasOptions ? (
-                qData!.options!.map((opt: any) => {
-                  const value = typeof opt === "string" ? opt : opt.label;
-                  const label =
-                    typeof opt === "string"
-                      ? opt
-                      : `${opt.label}${opt.text ? ` ${opt.text}` : ""}`;
-                  return (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  );
-                })
-              ) : (
-                <option disabled>No options available</option>
+        if (hasOptions) {
+          const firstOption = qData!.options![0];
+          const firstLabel =
+            typeof firstOption === "string" ? firstOption : firstOption.label;
+          const isSingleChar = firstLabel.trim().length <= 2; // A, B, C, etc.
+
+          if (isSingleChar) {
+            // Render as dropdown for single-character options
+            parts.push(
+              <span
+                key={`q-${qNum}`}
+                className="inline-flex items-center gap-1"
+              >
+                {showQuestionNumbers && (
+                  <span className="text-xs font-semibold text-gray-600">
+                    {qNum}.
+                  </span>
+                )}
+                <select
+                  value={answers[qNum] || ""}
+                  onChange={(e) => onAnswerChange(qNum, e.target.value)}
+                  className={`mx-1 inline-block min-w-[140px] rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-1 ${colors.focus}`}
+                >
+                  <option value="">Select...</option>
+                  {qData!.options!.map((opt: any) => {
+                    const value = typeof opt === "string" ? opt : opt.label;
+                    const label =
+                      typeof opt === "string"
+                        ? opt
+                        : `${opt.label}${opt.text ? ` ${opt.text}` : ""}`;
+                    return (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    );
+                  })}
+                </select>
+              </span>,
+            );
+          } else {
+            // Render as radio buttons for multi-word options
+            parts.push(
+              <div key={`q-${qNum}`} className="my-4 pl-0">
+                <div className="space-y-2">
+                  {qData!.options!.map((opt: any) => {
+                    const value = typeof opt === "string" ? opt : opt.label;
+                    const displayText =
+                      typeof opt === "string"
+                        ? opt
+                        : `${opt.label}${opt.text ? `. ${opt.text}` : ""}`;
+
+                    return (
+                      <label
+                        key={value}
+                        className="flex items-start gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
+                      >
+                        <input
+                          type="radio"
+                          name={`mcq-${qNum}`}
+                          value={value}
+                          checked={answers[qNum] === value}
+                          onChange={(e) => onAnswerChange(qNum, e.target.value)}
+                          className={`mt-0.5 h-4 w-4 ${colors.radio} focus:ring-2`}
+                        />
+                        <span className="text-sm text-gray-800 leading-relaxed">
+                          {displayText}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>,
+            );
+          }
+        } else {
+          // No options available - show placeholder
+          parts.push(
+            <span key={`q-${qNum}`} className="inline-flex items-center gap-1">
+              {showQuestionNumbers && (
+                <span className="text-xs font-semibold text-gray-600">
+                  {qNum}.
+                </span>
               )}
-            </select>
-          </span>,
-        );
+              <select
+                disabled
+                className="mx-1 inline-block min-w-[140px] rounded border border-gray-300 bg-gray-100 px-2 py-1 text-xs font-medium text-gray-500"
+              >
+                <option>No options available</option>
+              </select>
+            </span>,
+          );
+        }
       } else if (inputType === "dropdown" && qData?.options) {
         // Render dropdown for MCQ options (i, ii, iii, A, B, C, etc.)
         parts.push(

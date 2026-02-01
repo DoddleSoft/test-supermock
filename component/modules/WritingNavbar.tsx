@@ -7,9 +7,15 @@ import Image from "next/image";
 
 interface WritingNavbarProps {
   timeLeft?: number;
+  questions?: string;
+  onSubmit?: () => void;
 }
 
-export default function WritingNavbar({ timeLeft = 0 }: WritingNavbarProps) {
+export default function WritingNavbar({
+  timeLeft = 0,
+  questions,
+  onSubmit,
+}: WritingNavbarProps) {
   const [scrolled, setScrolled] = useState(false);
 
   const formatTime = (seconds: number) => {
@@ -61,18 +67,27 @@ export default function WritingNavbar({ timeLeft = 0 }: WritingNavbarProps) {
             <p className="text-sm text-gray-700 font-semibold">Writing</p>
           </div>
 
+          {/* --- Questions Display --- */}
+          {questions && (
+            <div className="hidden md:flex items-center gap-2 px-6 py-2 rounded-lg bg-purple-50 border border-purple-200">
+              <span className="text-sm font-semibold text-gray-900">
+                {questions}
+              </span>
+            </div>
+          )}
+
           {/* --- CTA & Mobile Toggle --- */}
           <div className="flex items-center gap-6">
             <p className="font-semibold text-2xl text-gray-900">
               {formatTime(timeLeft)}
             </p>
 
-            <Link
-              href="/auth/login"
+            <button
+              onClick={onSubmit}
               className="hidden sm:block px-4 py-2 md:px-5 text-xs md:text-sm font-semibold text-white transition-all bg-gradient-to-r from-purple-600 to-purple-900 rounded-xl hover:from-purple-700 hover:to-purple-800 hover:shadow-sm hover:shadow-purple-500/30 active:scale-95"
             >
               Submit Test
-            </Link>
+            </button>
           </div>
         </div>
       </div>
