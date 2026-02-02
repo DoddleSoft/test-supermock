@@ -47,6 +47,7 @@ export default async function ListeningPage({ params }: ListeningPageProps) {
       attemptId={id}
       studentId={studentId}
       paperId={paperData.paper.id}
+      centerSlug={slug}
       serverData={paperData}
     >
       <ListeningTestClient slug={slug} />

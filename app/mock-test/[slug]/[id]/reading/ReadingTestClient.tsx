@@ -12,10 +12,7 @@ import {
   updateAnswerInStorage,
   getModuleAnswersFromStorage,
 } from "@/utils/answerStorage";
-import {
-  syncStoredAnswersToDatabase,
-  submitAndClearAnswers,
-} from "@/helpers/answerSync";
+import { syncStoredAnswersToDatabase } from "@/helpers/answerSync";
 
 interface ReadingTestClientProps {
   attemptId: string;
@@ -30,6 +27,7 @@ export default function ReadingTestClient({
 }: ReadingTestClientProps) {
   const router = useRouter();
   const {
+    modules,
     currentModule,
     sections,
     subSections,
@@ -44,124 +42,87 @@ export default function ReadingTestClient({
     setCurrentSection,
     submitModule,
     isLoading,
+    showSubmitDialog,
+    submitDialogMessage,
+    dismissSubmitDialog,
+    getNextModuleUrl,
+    currentAttemptModule,
   } = useExam();
 
   const [isConfirmingSubmit, setIsConfirmingSubmit] = useState(false);
   const [moduleLoaded, setModuleLoaded] = useState(false);
-  const attemptIdRef = useRef<string>(attemptId);
   const localAnswersRef = useRef<Record<string, string>>({});
+  const moduleLoadInProgress = useRef(false);
 
+  // Handle auto-submit dialog
   useEffect(() => {
-    const init = async () => {
-      try {
-        if (moduleLoaded) return;
+    if (showSubmitDialog && submitDialogMessage) {
+      const timer = setTimeout(() => {
+        const nextUrl = getNextModuleUrl();
+        dismissSubmitDialog();
+        if (nextUrl) {
+          router.push(nextUrl);
+        } else {
+          router.push(`/mock-test/${centerSlug}/profile`);
+        }
+      }, 3000);
 
-        await loadModule(moduleId);
-        setModuleLoaded(true);
-
-        // Load answers from localStorage
-        const storedAnswers = getModuleAnswersFromStorage(attemptId, "reading");
-        const answerMap: Record<string, string> = {};
-        storedAnswers.forEach((a) => {
-          const key = `${a.referenceId}_${a.questionRef}`;
-          answerMap[key] = a.studentResponse;
-          // Submit to context
-          submitAnswer(a.questionRef, a.referenceId, a.studentResponse);
-        });
-        localAnswersRef.current = answerMap;
-      } catch (error) {
-        console.error("Init error:", error);
-        toast.error("Failed to load module");
-        setModuleLoaded(true);
-      }
-    };
-
-    init();
-    // DO NOT include moduleLoaded in the dependency array to avoid infinite loop
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadModule, moduleId, submitAnswer, attemptId]);
-
-  const handleAnswerChange = (questionRef: string, value: string) => {
-    const subSectionId = questionToSubSection[questionRef];
-    if (!subSectionId) return;
-
-    submitAnswer(questionRef, subSectionId, value);
-
-    // Save to localStorage
-    if (attemptIdRef.current && currentModule?.id) {
-      updateAnswerInStorage(attemptIdRef.current, currentModule.id, {
-        questionRef,
-        referenceId: subSectionId, // subsection_id for reading
-        studentResponse: value,
-        moduleType: "reading",
-        timestamp: Date.now(),
-      });
-
-      const key = `${subSectionId}_${questionRef}`;
-      localAnswersRef.current[key] = value;
+      return () => clearTimeout(timer);
     }
-  };
+  }, [
+    showSubmitDialog,
+    submitDialogMessage,
+    getNextModuleUrl,
+    dismissSubmitDialog,
+    router,
+    centerSlug,
+  ]);
 
-  // Add Ctrl+S save functionality
+  // Load the reading module on mount
   useEffect(() => {
-    const handleKeyDown = async (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-        e.preventDefault();
-        if (!currentModule?.id || !attemptIdRef.current) return;
+    if (moduleLoaded || moduleLoadInProgress.current) return;
+    if (modules.length === 0) return;
 
-        toast.promise(
-          syncStoredAnswersToDatabase(attemptIdRef.current, currentModule.id),
-          {
-            loading: "Saving answers...",
-            success: (result) => `Saved ${result.savedCount} answers`,
-            error: "Failed to save answers",
-          },
-        );
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [currentModule]);
-
-  const handleSubmit = async () => {
-    if (answeredQuestions < totalQuestions) {
-      setIsConfirmingSubmit(true);
+    const readingModule = modules.find((m) => m.module_type === "reading");
+    if (!readingModule) {
+      toast.error("Reading module not found");
       return;
     }
-    await confirmSubmit();
-  };
 
-  const confirmSubmit = async () => {
-    try {
-      // First sync all answers to database and clear localStorage
-      if (currentModule?.id && attemptIdRef.current) {
-        const syncResult = await submitAndClearAnswers(
-          attemptIdRef.current,
-          currentModule.id,
-        );
-
-        if (!syncResult.success) {
-          toast.error("Failed to save answers before submit");
-          setIsConfirmingSubmit(false);
-          return;
-        }
-      }
-
-      const result = await submitModule();
-      if (result.success) {
-        toast.success(`Module completed! Band Score: ${result.bandScore}`);
-        router.push(`/mock-test/${centerSlug}/${attemptId}/results`);
-      } else {
-        toast.error(result.error || "Failed to submit");
-      }
-    } catch (error) {
-      console.error("Submit error:", error);
-      toast.error("Failed to submit module");
-    } finally {
-      setIsConfirmingSubmit(false);
+    // Check if module is already loaded
+    if (currentModule && currentModule.id === readingModule.id) {
+      setModuleLoaded(true);
+      return;
     }
-  };
+
+    moduleLoadInProgress.current = true;
+    loadModule(readingModule.id)
+      .then(() => {
+        setModuleLoaded(true);
+        // Load answers from localStorage
+        if (attemptId) {
+          const storedAnswers = getModuleAnswersFromStorage(
+            attemptId,
+            "reading",
+          );
+          const answerMap: Record<string, string> = {};
+          storedAnswers.forEach((a) => {
+            const key = `${a.referenceId}_${a.questionRef}`;
+            answerMap[key] = a.studentResponse;
+            // Submit to context
+            submitAnswer(a.questionRef, a.referenceId, a.studentResponse);
+          });
+          localAnswersRef.current = answerMap;
+        }
+      })
+      .catch((error) => {
+        console.error("Load reading module error:", error);
+        toast.error("Failed to load reading module");
+      })
+      .finally(() => {
+        moduleLoadInProgress.current = false;
+      });
+  }, [modules, currentModule]);
 
   const currentSection = sections[currentSectionIndex];
   const sectionSubSections = subSections.filter(
@@ -173,35 +134,100 @@ export default function ReadingTestClient({
 
   const questionToSubSection = useMemo(() => {
     const map: Record<string, string> = {};
-    sectionQuestions.forEach((qa) => {
+    // Use ALL questionAnswers to ensure we have mappings for every question
+    questionAnswers.forEach((qa) => {
       map[qa.question_ref] = qa.sub_section_id;
     });
     return map;
-  }, [sectionQuestions]);
+  }, [questionAnswers]);
 
   const questionMap = useMemo(() => {
     const map: Record<string, { answer: string; options?: any[] }> = {};
-    sectionQuestions.forEach((qa) => {
+    // Use ALL questionAnswers to ensure all questions have options/config
+    questionAnswers.forEach((qa) => {
       map[qa.question_ref] = {
         answer: "",
         options: qa.options ?? [],
       };
     });
     return map;
-  }, [sectionQuestions]);
+  }, [questionAnswers]);
 
   const answerMap = useMemo(() => {
     const map: Record<string, string> = {};
+    // Include ALL answers, not just current section
     answers.forEach((value) => {
-      if (sectionSubSections.some((ss) => ss.id === value.sub_section_id)) {
-        const response = Array.isArray(value.student_response)
-          ? value.student_response.join(", ")
-          : value.student_response;
-        map[value.question_ref] = response ?? "";
-      }
+      const response = Array.isArray(value.student_response)
+        ? value.student_response.join(", ")
+        : value.student_response;
+      map[value.question_ref] = response ?? "";
     });
     return map;
-  }, [answers, sectionSubSections]);
+  }, [answers]);
+
+  const handleAnswerChange = (questionRef: string, value: string) => {
+    const subSectionId = questionToSubSection[questionRef];
+    if (!subSectionId) {
+      console.error(`[Reading] No subsection for Q${questionRef}`);
+      console.error(
+        "[Reading] Available mappings:",
+        Object.keys(questionToSubSection).length,
+      );
+      console.error("[Reading] Total questionAnswers:", questionAnswers.length);
+      return;
+    }
+  };
+
+  // Ctrl+S save functionality
+  useEffect(() => {
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        if (!currentAttemptModule?.id || !attemptId) return;
+
+        toast.promise(
+          syncStoredAnswersToDatabase(attemptId, currentAttemptModule.id),
+          {
+            loading: "Saving answers...",
+            success: (result) => `Saved ${result.savedCount} answers`,
+            error: "Failed to save answers",
+          },
+        );
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [currentAttemptModule, attemptId]);
+
+  const confirmSubmit = async () => {
+    if (!currentAttemptModule?.id) {
+      toast.error("No active module to submit");
+      setIsConfirmingSubmit(false);
+      return;
+    }
+
+    // First sync local storage to database
+    if (attemptId) {
+      await syncStoredAnswersToDatabase(attemptId, currentAttemptModule.id);
+    }
+
+    toast.promise(submitModule(), {
+      loading: "Submitting your answers...",
+      success: (result) => {
+        if (result.success) {
+          setTimeout(() => {
+            router.push(`/mock-test/${centerSlug}/profile`);
+          }, 1500);
+          return `Module submitted! Score: ${result.totalScore}/${result.maxScore}`;
+        }
+        return "Submission completed";
+      },
+      error: (err) => `Submission failed: ${err}`,
+    });
+
+    setIsConfirmingSubmit(false);
+  };
 
   const buildBlocks = (template?: string | null, subType?: string | null) => {
     if (!template) return [] as Array<{ type: string; content?: string }>;
@@ -416,6 +442,40 @@ export default function ReadingTestClient({
                   Submit
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSubmitDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full">
+            <div className="text-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 mb-4">
+                <svg
+                  className="w-8 h-8 text-green-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">
+                Submitted Successfully
+              </h3>
+              <p className="text-gray-600 mb-6">
+                {submitDialogMessage ||
+                  "Your answers have been submitted for evaluation."}
+              </p>
+              <p className="text-sm text-gray-500">
+                Redirecting to next module...
+              </p>
             </div>
           </div>
         </div>

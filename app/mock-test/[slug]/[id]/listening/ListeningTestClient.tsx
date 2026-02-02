@@ -36,6 +36,10 @@ export default function ListeningTestClient({
     attemptId,
     currentAttemptModule,
     submitModule,
+    showSubmitDialog,
+    submitDialogMessage,
+    dismissSubmitDialog,
+    getNextModuleUrl,
   } = useExam();
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -47,10 +51,35 @@ export default function ListeningTestClient({
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioTimesRef = useRef<Record<string, number>>({});
   const localAnswersRef = useRef<Record<string, string>>({});
+  const moduleLoadInProgress = useRef(false);
+
+  // Handle auto-submit dialog
+  useEffect(() => {
+    if (showSubmitDialog && submitDialogMessage) {
+      const timer = setTimeout(() => {
+        const nextUrl = getNextModuleUrl();
+        dismissSubmitDialog();
+        if (nextUrl) {
+          router.push(nextUrl);
+        } else {
+          router.push(`/mock-test/${slug}/profile`);
+        }
+      }, 3000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [
+    showSubmitDialog,
+    submitDialogMessage,
+    getNextModuleUrl,
+    dismissSubmitDialog,
+    router,
+    slug,
+  ]);
 
   // Load the listening module on mount
   useEffect(() => {
-    if (moduleLoaded) return;
+    if (moduleLoaded || moduleLoadInProgress.current) return;
     if (modules.length === 0) return;
 
     const listeningModule = modules.find((m) => m.module_type === "listening");
@@ -59,6 +88,13 @@ export default function ListeningTestClient({
       return;
     }
 
+    // Check if module is already loaded
+    if (currentModule && currentModule.id === listeningModule.id) {
+      setModuleLoaded(true);
+      return;
+    }
+
+    moduleLoadInProgress.current = true;
     loadModule(listeningModule.id)
       .then(() => {
         setModuleLoaded(true);
@@ -81,8 +117,11 @@ export default function ListeningTestClient({
       .catch((error) => {
         console.error("Load listening module error:", error);
         toast.error("Failed to load listening module");
+      })
+      .finally(() => {
+        moduleLoadInProgress.current = false;
       });
-  }, [modules, loadModule, moduleLoaded, submitAnswer, attemptId]);
+  }, [modules, currentModule]);
 
   const currentSection = sections[currentSectionIndex];
   const sectionSubSections = subSections.filter(
@@ -559,6 +598,40 @@ export default function ListeningTestClient({
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSubmitDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
+          <div className="bg-white rounded-2xl p-8 max-w-md w-full">
+            <div className="text-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 mb-4">
+                <svg
+                  className="w-8 h-8 text-green-600"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M5 13l4 4L19 7"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">
+                Submitted Successfully
+              </h3>
+              <p className="text-gray-600 mb-6">
+                {submitDialogMessage ||
+                  "Your answers have been submitted for evaluation."}
+              </p>
+              <p className="text-sm text-gray-500">
+                Redirecting to next module...
+              </p>
             </div>
           </div>
         </div>

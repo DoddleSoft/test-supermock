@@ -103,8 +103,12 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
 
     // Save to localStorage
     if (attemptId && currentModule?.id) {
+      // Find the section index to determine essay number
+      const sectionIdx = sections.findIndex((s) => s.id === sectionId);
+      const essayNumber = sectionIdx + 1;
+
       updateAnswerInStorage(attemptId, currentModule.id, {
-        questionRef: "essay", // For writing, we use a generic ref
+        questionRef: `essay ${essayNumber}`, // essay 1, essay 2, etc.
         referenceId: sectionId, // section_id for writing
         studentResponse: value,
         moduleType: "writing",
@@ -222,6 +226,7 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
                       alt="Task resource"
                       width={600}
                       height={400}
+                      priority={true}
                       className="max-h-96 w-auto rounded-lg border shadow-sm object-contain"
                     />
                   </div>

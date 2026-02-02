@@ -101,6 +101,7 @@ export default async function ReadingPage({ params }: ReadingPageProps) {
       attemptId={id}
       studentId={studentId}
       paperId={attemptData.paper_id}
+      centerSlug={slug}
       serverData={paperData}
     >
       <ReadingTestClient

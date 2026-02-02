@@ -76,6 +76,7 @@ interface ExamState {
   // Attempt Info
   attemptId: string | null;
   paperId: string | null;
+  centerSlug: string | null;
 
   // Module Data
   modules: Module[];
@@ -100,6 +101,8 @@ interface ExamState {
   isLoading: boolean;
   isSaving: boolean;
   error: string | null;
+  showSubmitDialog: boolean;
+  submitDialogMessage: string | null;
 
   // Timer
   timeLeft: number;
@@ -131,8 +134,11 @@ interface ExamContextType extends ExamState {
     maxScore?: number;
     bandScore?: number;
     error?: string;
+    nextModuleUrl?: string;
   }>;
   saveProgress: () => Promise<void>;
+  dismissSubmitDialog: () => void;
+  getNextModuleUrl: () => string | null;
 }
 
 const ExamContext = createContext<ExamContextType | undefined>(undefined);
@@ -191,6 +197,7 @@ interface ExamProviderProps {
   attemptId?: string;
   studentId?: string;
   paperId?: string;
+  centerSlug?: string;
   serverData?: {
     // Make these optional so it handles both structures
     paper?: any;
@@ -209,6 +216,7 @@ export function ExamProvider({
   attemptId: initialAttemptId,
   studentId: initialStudentId,
   paperId: initialPaperId,
+  centerSlug: initialCenterSlug,
   serverData,
 }: ExamProviderProps) {
   const { studentId: authStudentId } = useAuth();
@@ -264,6 +272,7 @@ export function ExamProvider({
       return {
         attemptId: initialAttemptId,
         paperId: initialPaperId,
+        centerSlug: initialCenterSlug || null,
         modules: modulesArray,
         currentModuleId: null,
         currentModule: null,
@@ -278,6 +287,8 @@ export function ExamProvider({
         isLoading: false,
         isSaving: false,
         error: null,
+        showSubmitDialog: false,
+        submitDialogMessage: null,
         timeLeft: 0,
         isTimerRunning: false,
         totalQuestions: 0,
@@ -290,6 +301,7 @@ export function ExamProvider({
     return {
       attemptId: null,
       paperId: null,
+      centerSlug: null,
       modules: [],
       currentModuleId: null,
       currentModule: null,
@@ -304,6 +316,8 @@ export function ExamProvider({
       isLoading: false,
       isSaving: false,
       error: null,
+      showSubmitDialog: false,
+      submitDialogMessage: null,
       timeLeft: 0,
       isTimerRunning: false,
       totalQuestions: 0,
@@ -316,6 +330,7 @@ export function ExamProvider({
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const loadExamInFlight = useRef(false);
   const loadExamAttemptsRef = useRef<Record<string, number>>({});
+  const loadedModulesRef = useRef<Set<string>>(new Set());
   const supabase = createClient();
 
   const wait = (ms: number) =>
@@ -516,123 +531,165 @@ export function ExamProvider({
   );
 
   // --- MOVED UP: Submit module (Must be defined before use in Timer useEffect) ---
-  const submitModule = useCallback(async (): Promise<{
-    success: boolean;
-    totalScore?: number;
-    maxScore?: number;
-    bandScore?: number;
-    error?: string;
-  }> => {
-    if (!state.currentAttemptModule) {
-      return { success: false, error: "No module loaded" };
-    }
+  const submitModule = useCallback(
+    async (
+      autoSubmit: boolean = false,
+    ): Promise<{
+      success: boolean;
+      totalScore?: number;
+      maxScore?: number;
+      bandScore?: number;
+      error?: string;
+      nextModuleUrl?: string;
+    }> => {
+      if (!state.currentAttemptModule) {
+        return { success: false, error: "No module loaded" };
+      }
 
-    try {
-      setState((prev) => ({ ...prev, isLoading: true }));
+      try {
+        setState((prev) => ({ ...prev, isLoading: true }));
 
-      // 1. Final sync of timer to database
-      await supabase
-        .from("attempt_modules")
-        .update({
-          time_remaining_seconds: state.timeLeft,
-        })
-        .eq("id", state.currentAttemptModule.id);
+        // 1. Final sync of timer to database
+        await supabase
+          .from("attempt_modules")
+          .update({
+            time_remaining_seconds: state.timeLeft,
+          })
+          .eq("id", state.currentAttemptModule.id);
 
-      // 2. Batch insert all answers to database
-      if (state.answers.size > 0) {
-        const answersToSave = Array.from(state.answers.values()).map((ans) => ({
-          attempt_module_id: state.currentAttemptModule!.id,
-          reference_id: ans.sub_section_id,
-          question_ref: ans.question_ref,
-          student_response:
-            typeof ans.student_response === "string"
-              ? ans.student_response
-              : JSON.stringify(ans.student_response),
+        // 2. Batch insert all answers to database
+        if (state.answers.size > 0) {
+          const answersToSave = Array.from(state.answers.values()).map(
+            (ans) => ({
+              attempt_module_id: state.currentAttemptModule!.id,
+              reference_id: ans.sub_section_id,
+              question_ref: ans.question_ref,
+              student_response:
+                typeof ans.student_response === "string"
+                  ? ans.student_response
+                  : JSON.stringify(ans.student_response),
+            }),
+          );
+
+          const { error: answersError } = await supabase
+            .from("student_answers")
+            .upsert(answersToSave, {
+              onConflict: "attempt_module_id,reference_id,question_ref",
+            });
+
+          if (answersError) throw answersError;
+        }
+
+        // 3. Call backend grading API for automatic evaluation
+        const gradingResponse = await fetch("/api/grading", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            attemptModuleId: state.currentAttemptModule.id,
+          }),
+        });
+
+        if (!gradingResponse.ok) {
+          throw new Error("Grading API failed");
+        }
+
+        const result = await gradingResponse.json();
+
+        if (!result.success) {
+          throw new Error(result.error || "Failed to grade module");
+        }
+
+        // 4. Update attempt_module status to completed
+        const { error: updateError } = await supabase
+          .from("attempt_modules")
+          .update({
+            status: "completed",
+            completed_at: new Date().toISOString(),
+            band_score: result.bandScore || null,
+            score_obtained: result.totalScore || 0,
+            time_remaining_seconds: 0,
+          })
+          .eq("id", state.currentAttemptModule.id);
+
+        if (updateError) throw updateError;
+
+        // 5. Determine next module URL
+        const currentModuleType = state.currentModule?.module_type;
+        const moduleOrder = ["listening", "reading", "writing", "speaking"];
+        const currentIndex = moduleOrder.indexOf(currentModuleType || "");
+        let nextModuleUrl: string | null = null;
+
+        if (currentIndex >= 0 && currentIndex < moduleOrder.length - 1) {
+          const nextModuleType = moduleOrder[currentIndex + 1];
+          const nextModule = state.modules.find(
+            (m) => m.module_type === nextModuleType,
+          );
+          if (nextModule && state.centerSlug && state.attemptId) {
+            nextModuleUrl = `/mock-test/${state.centerSlug}/${state.attemptId}/${nextModuleType}`;
+          }
+        }
+
+        // 6. Clear localStorage for this module
+        const localKey = `exam_${state.attemptId}_${state.currentModuleId}`;
+        localStorage.removeItem(localKey);
+
+        // Clear answer storage
+        if (state.attemptId) {
+          const answerStorageKey = `exam_answers_${state.attemptId}`;
+          localStorage.removeItem(answerStorageKey);
+        }
+
+        // 7. Stop timer
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+        }
+
+        // 8. Show dialog if auto-submitted
+        const dialogMessage = autoSubmit
+          ? "Time's up! Your answers have been submitted to the center for evaluation."
+          : null;
+
+        setState((prev) => ({
+          ...prev,
+          isLoading: false,
+          isTimerRunning: false,
+          answers: new Map(), // Clear answers from state
+          showSubmitDialog: autoSubmit,
+          submitDialogMessage: dialogMessage,
         }));
 
-        const { error: answersError } = await supabase
-          .from("student_answers")
-          .upsert(answersToSave, {
-            onConflict: "attempt_module_id,reference_id,question_ref",
-          });
-
-        if (answersError) throw answersError;
+        return { ...result, nextModuleUrl: nextModuleUrl || undefined };
+      } catch (error: any) {
+        console.error("Error submitting module:", error);
+        setState((prev) => ({
+          ...prev,
+          isLoading: false,
+          error: error.message,
+        }));
+        return {
+          success: false,
+          error: error.message,
+        };
       }
-
-      // 3. Import the submitModule helper for evaluation
-      const { submitModule: submitModuleHelper } =
-        await import("@/helpers/answers");
-
-      // 4. Submit and evaluate
-      const result = await submitModuleHelper(state.currentAttemptModule.id);
-
-      if (!result.success) {
-        throw new Error(result.error || "Failed to submit module");
-      }
-
-      // 5. Update attempt_module status to completed
-      const { error: updateError } = await supabase
-        .from("attempt_modules")
-        .update({
-          status: "completed",
-          completed_at: new Date().toISOString(),
-          band_score: result.bandScore || null,
-          score_obtained: result.totalScore || 0,
-          time_remaining_seconds: 0,
-        })
-        .eq("id", state.currentAttemptModule.id);
-
-      if (updateError) throw updateError;
-
-      // 6. Clear localStorage for this module
-      const localKey = `exam_${state.attemptId}_${state.currentModuleId}`;
-      localStorage.removeItem(localKey);
-
-      // Clear answer storage
-      if (state.attemptId) {
-        const answerStorageKey = `exam_answers_${state.attemptId}`;
-        localStorage.removeItem(answerStorageKey);
-      }
-
-      // 7. Stop timer
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-
-      setState((prev) => ({
-        ...prev,
-        isLoading: false,
-        isTimerRunning: false,
-        answers: new Map(), // Clear answers from state
-      }));
-
-      return result;
-    } catch (error: any) {
-      console.error("Error submitting module:", error);
-      setState((prev) => ({
-        ...prev,
-        isLoading: false,
-        error: error.message,
-      }));
-      return {
-        success: false,
-        error: error.message,
-      };
-    }
-  }, [
-    state.currentAttemptModule,
-    state.attemptId,
-    state.currentModuleId,
-    state.answers,
-    state.timeLeft,
-    supabase,
-  ]);
+    },
+    [
+      state.currentAttemptModule,
+      state.attemptId,
+      state.currentModuleId,
+      state.currentModule,
+      state.modules,
+      state.centerSlug,
+      state.answers,
+      state.timeLeft,
+      supabase,
+    ],
+  );
 
   // Timer logic with database sync
   useEffect(() => {
     if (state.isTimerRunning && state.timeLeft > 0) {
       let tickCount = 0;
-      const SYNC_INTERVAL = 10; // Sync to DB every 10 seconds
+      const SYNC_INTERVAL = 30; // Sync to DB every 30 seconds to reduce load
 
       timerRef.current = setInterval(() => {
         setState((prev) => {
@@ -659,7 +716,7 @@ export function ExamProvider({
 
           if (newTime <= 0) {
             // Auto-submit when timer expires
-            submitModule();
+            submitModule(true);
             return { ...prev, timeLeft: 0, isTimerRunning: false };
           }
           return { ...prev, timeLeft: newTime };
@@ -907,11 +964,24 @@ export function ExamProvider({
   const loadModule = useCallback(
     async (moduleId: string) => {
       try {
+        // Check if module is already loaded to avoid duplicate loads
+        if (
+          loadedModulesRef.current.has(moduleId) &&
+          state.currentModuleId === moduleId
+        ) {
+          console.log(
+            "[loadModule] Module already loaded, skipping:",
+            moduleId,
+          );
+          return;
+        }
+
         setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
         const module = state.modules.find((m) => m.id === moduleId);
         if (!module) throw new Error("Module not found");
 
+        // Only query attempt_modules ONCE per module load
         const { data: maybeAttemptModule, error: attemptModuleError } =
           await supabase
             .from("attempt_modules")
@@ -989,6 +1059,17 @@ export function ExamProvider({
             ),
         );
 
+        // Debug: Log question options to verify they're loaded
+        console.log(
+          "[loadModule] Question answers with options:",
+          questionAnswers.slice(0, 5).map((qa) => ({
+            ref: qa.question_ref,
+            hasOptions: !!qa.options,
+            optionsCount: qa.options?.length || 0,
+            firstOption: qa.options?.[0],
+          })),
+        );
+
         // Load existing answers from localStorage or database
         const localKey = `exam_${state.attemptId}_${moduleId}`;
         const localData = localStorage.getItem(localKey);
@@ -1035,6 +1116,9 @@ export function ExamProvider({
         const timeToSet =
           attemptModule.time_remaining_seconds || moduleDuration;
 
+        // Mark module as loaded to prevent duplicate loads
+        loadedModulesRef.current.add(moduleId);
+
         setState((prev) => ({
           ...prev,
           currentModuleId: moduleId,
@@ -1060,7 +1144,13 @@ export function ExamProvider({
         }));
       }
     },
-    [state.modules, state.attemptId, state.moduleContentMap, supabase],
+    [
+      state.modules,
+      state.attemptId,
+      state.moduleContentMap,
+      state.currentModuleId,
+      supabase,
+    ],
   );
 
   // Set current section
@@ -1148,6 +1238,33 @@ export function ExamProvider({
     }
   }, []);
 
+  // Dismiss submit dialog
+  const dismissSubmitDialog = useCallback(() => {
+    setState((prev) => ({
+      ...prev,
+      showSubmitDialog: false,
+      submitDialogMessage: null,
+    }));
+  }, []);
+
+  // Get next module URL
+  const getNextModuleUrl = useCallback((): string | null => {
+    const currentModuleType = state.currentModule?.module_type;
+    const moduleOrder = ["listening", "reading", "writing", "speaking"];
+    const currentIndex = moduleOrder.indexOf(currentModuleType || "");
+
+    if (currentIndex >= 0 && currentIndex < moduleOrder.length - 1) {
+      const nextModuleType = moduleOrder[currentIndex + 1];
+      const nextModule = state.modules.find(
+        (m) => m.module_type === nextModuleType,
+      );
+      if (nextModule && state.centerSlug && state.attemptId) {
+        return `/mock-test/${state.centerSlug}/${state.attemptId}/${nextModuleType}`;
+      }
+    }
+    return null;
+  }, [state.currentModule, state.modules, state.centerSlug, state.attemptId]);
+
   return (
     <ExamContext.Provider
       value={{
@@ -1161,6 +1278,8 @@ export function ExamProvider({
         stopTimer,
         submitModule,
         saveProgress,
+        dismissSubmitDialog,
+        getNextModuleUrl,
       }}
     >
       {children}

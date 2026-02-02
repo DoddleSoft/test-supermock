@@ -74,10 +74,6 @@ export interface ValidateAccessResult {
   studentId?: string;
 }
 
-/**
- * Validates if a student has access to a mock attempt
- * Uses the validate_student_attempt_access RPC function
- */
 export async function validateStudentAttemptAccess(
   mockAttemptId: string,
 ): Promise<ValidateAccessResult> {
@@ -205,9 +201,6 @@ export async function validateStudentAttemptAccess(
   }
 }
 
-/**
- * Loads paper data with all modules using the load_paper_with_modules RPC function
- */
 export async function loadPaperWithModules(
   paperId: string,
 ): Promise<{ success: boolean; data?: ModuleData; error?: string }> {
@@ -271,10 +264,6 @@ export async function loadPaperWithModules(
   }
 }
 
-/**
- * Combined function to validate access and load exam data
- * This is the main function that should be called from page components
- */
 export async function loadExamData(attemptId: string): Promise<{
   success: boolean;
   data?: {

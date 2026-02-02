@@ -84,7 +84,7 @@ export default function WritingNavbar({
 
             <button
               onClick={onSubmit}
-              className="hidden sm:block px-4 py-2 md:px-5 text-xs md:text-sm font-semibold text-white transition-all bg-gradient-to-r from-purple-600 to-purple-900 rounded-xl hover:from-purple-700 hover:to-purple-800 hover:shadow-sm hover:shadow-purple-500/30 active:scale-95"
+              className="hidden sm:block px-4 py-2 md:px-5 text-xs md:text-sm font-semibold text-white transition-all bg-gradient-to-r from-red-600 to-red-900 rounded-xl hover:from-red-700 hover:to-red-800 hover:shadow-sm hover:shadow-red-500/30 active:scale-95"
             >
               Submit Test
             </button>
