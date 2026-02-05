@@ -1,5 +1,7 @@
 import { ExamProvider } from "@/context/ExamContext";
 import { loadExamData } from "@/app/actions/exam";
+import { validateScheduledTestAccess } from "@/utils/validateTestAccess";
+import TestExpiredScreen from "@/component/exam/TestExpiredScreen";
 import WritingTestClient from "./WritingTestClient";
 
 interface WritingPageProps {
@@ -8,6 +10,21 @@ interface WritingPageProps {
 
 export default async function WritingPage({ params }: WritingPageProps) {
   const { slug, id } = await params;
+
+  // CRITICAL SECURITY CHECK: Validate scheduled test access
+  const validation = await validateScheduledTestAccess(id);
+
+  if (!validation.isValid) {
+    return (
+      <TestExpiredScreen
+        message={validation.error}
+        testTitle={validation.scheduledTest?.title}
+        endedAt={validation.scheduledTest?.ended_at}
+        centerSlug={slug}
+      />
+    );
+  }
+
   const examData = await loadExamData(id);
 
   if (!examData.success || !examData.data) {

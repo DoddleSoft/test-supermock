@@ -360,6 +360,23 @@ export async function submitModule(attemptModuleId: string): Promise<{
   try {
     const supabase = createClient();
 
+    // Get module info to check if already completed
+    const { data: moduleInfo, error: moduleError } = await supabase
+      .from("attempt_modules")
+      .select("status, started_at, time_spent_seconds, modules(module_type)")
+      .eq("id", attemptModuleId)
+      .single();
+
+    if (moduleError) throw moduleError;
+
+    // Calculate time spent since module started
+    const startedAt = moduleInfo.started_at
+      ? new Date(moduleInfo.started_at).getTime()
+      : Date.now();
+    const additionalTimeSpent = Math.floor((Date.now() - startedAt) / 1000);
+    const totalTimeSpent =
+      (moduleInfo.time_spent_seconds || 0) + additionalTimeSpent;
+
     // Evaluate answers
     const evaluation = await evaluateModuleAnswers(attemptModuleId);
 
@@ -374,12 +391,16 @@ export async function submitModule(attemptModuleId: string): Promise<{
         : null;
 
     // Update attempt_module with completion
+    const completedAt = new Date().toISOString();
     const { error: updateError } = await supabase
       .from("attempt_modules")
       .update({
         status: "completed",
-        completed_at: new Date().toISOString(),
+        completed_at: completedAt,
         band_score: bandScore,
+        score_obtained: evaluation.totalScore || 0,
+        time_spent_seconds: totalTimeSpent,
+        time_remaining_seconds: 0,
       })
       .eq("id", attemptModuleId);
 

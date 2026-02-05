@@ -4,13 +4,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useExam } from "@/context/ExamContext";
 import { toast } from "sonner";
-import { AlertTriangle } from "lucide-react";
 import RenderBlock from "@/component/modules/RenderBlock";
 import { Loader } from "@/component/ui/loader";
 import ReadingNavbar from "@/component/modules/ReadingNavbar";
 import {
-  updateAnswerInStorage,
   getModuleAnswersFromStorage,
+  updateAnswerInStorage,
 } from "@/utils/answerStorage";
 import { syncStoredAnswersToDatabase } from "@/helpers/answerSync";
 
@@ -35,8 +34,6 @@ export default function ReadingTestClient({
     answers,
     timeLeft,
     currentSectionIndex,
-    answeredQuestions,
-    totalQuestions,
     loadModule,
     submitAnswer,
     setCurrentSection,
@@ -49,7 +46,6 @@ export default function ReadingTestClient({
     currentAttemptModule,
   } = useExam();
 
-  const [isConfirmingSubmit, setIsConfirmingSubmit] = useState(false);
   const [moduleLoaded, setModuleLoaded] = useState(false);
   const localAnswersRef = useRef<Record<string, string>>({});
   const moduleLoadInProgress = useRef(false);
@@ -105,12 +101,21 @@ export default function ReadingTestClient({
             attemptId,
             "reading",
           );
+
+          // Build valid question set from current module
+          const validQuestions = new Set(
+            questionAnswers.map((qa) => qa.question_ref),
+          );
+
           const answerMap: Record<string, string> = {};
           storedAnswers.forEach((a) => {
-            const key = `${a.referenceId}_${a.questionRef}`;
-            answerMap[key] = a.studentResponse;
-            // Submit to context
-            submitAnswer(a.questionRef, a.referenceId, a.studentResponse);
+            // Only load answers for questions that exist in current module
+            if (validQuestions.has(a.questionRef)) {
+              const key = `${a.referenceId}_${a.questionRef}`;
+              answerMap[key] = a.studentResponse;
+              // Submit to context
+              submitAnswer(a.questionRef, a.referenceId, a.studentResponse);
+            }
           });
           localAnswersRef.current = answerMap;
         }
@@ -167,14 +172,26 @@ export default function ReadingTestClient({
 
   const handleAnswerChange = (questionRef: string, value: string) => {
     const subSectionId = questionToSubSection[questionRef];
+
     if (!subSectionId) {
-      console.error(`[Reading] No subsection for Q${questionRef}`);
-      console.error(
-        "[Reading] Available mappings:",
-        Object.keys(questionToSubSection).length,
-      );
-      console.error("[Reading] Total questionAnswers:", questionAnswers.length);
+      console.warn(`No subsection mapping for question ${questionRef}`);
       return;
+    }
+
+    submitAnswer(questionRef, subSectionId, value);
+
+    // Save to localStorage
+    if (attemptId && currentModule?.id) {
+      updateAnswerInStorage(attemptId, currentModule.id, {
+        questionRef,
+        referenceId: subSectionId,
+        studentResponse: value,
+        moduleType: "reading",
+        timestamp: Date.now(),
+      });
+
+      const key = `${subSectionId}_${questionRef}`;
+      localAnswersRef.current[key] = value;
     }
   };
 
@@ -200,10 +217,10 @@ export default function ReadingTestClient({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [currentAttemptModule, attemptId]);
 
-  const confirmSubmit = async () => {
+  // Handle submit - matches listening module logic
+  const handleSubmit = async () => {
     if (!currentAttemptModule?.id) {
       toast.error("No active module to submit");
-      setIsConfirmingSubmit(false);
       return;
     }
 
@@ -225,8 +242,6 @@ export default function ReadingTestClient({
       },
       error: (err) => `Submission failed: ${err}`,
     });
-
-    setIsConfirmingSubmit(false);
   };
 
   const buildBlocks = (template?: string | null, subType?: string | null) => {
@@ -272,6 +287,7 @@ export default function ReadingTestClient({
             ? `${sectionQuestions[0].question_ref}-${sectionQuestions[sectionQuestions.length - 1].question_ref}`
             : undefined
         }
+        onSubmit={handleSubmit}
       />
 
       <main className="mx-auto max-w-7xl pt-28 px-4">
@@ -415,37 +431,6 @@ export default function ReadingTestClient({
           </div>
         </div>
       </div>
-
-      {isConfirmingSubmit && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">
-          <div className="bg-white rounded-2xl p-8 max-w-md w-full">
-            <div className="text-center">
-              <AlertTriangle className="h-16 w-16 text-yellow-500 mx-auto mb-4" />
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">
-                Incomplete Answers
-              </h3>
-              <p className="text-gray-600 mb-6">
-                You have answered {answeredQuestions} out of {totalQuestions}{" "}
-                questions. Are you sure you want to submit?
-              </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setIsConfirmingSubmit(false)}
-                  className="flex-1 py-3 px-4 bg-gray-200 hover:bg-gray-300 rounded-xl font-semibold text-gray-700"
-                >
-                  Continue
-                </button>
-                <button
-                  onClick={confirmSubmit}
-                  className="flex-1 py-3 px-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 rounded-xl font-semibold text-white"
-                >
-                  Submit
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {showSubmitDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">

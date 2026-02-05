@@ -1,4 +1,5 @@
 import { createClient } from "@/utils/supabase/client";
+import { EARLY_ACCESS_MINUTES } from "@/utils/timezone";
 
 export interface ScheduledTest {
   id: string;
@@ -36,6 +37,9 @@ export function getTestStatus(test: ScheduledTest): TestStatus {
   const endTime = new Date(
     scheduledTime.getTime() + test.duration_minutes * 60000,
   );
+  const accessWindowEnd = new Date(
+    scheduledTime.getTime() + EARLY_ACCESS_MINUTES * 60 * 1000,
+  );
 
   // Test is cancelled
   if (test.status === "cancelled") {
@@ -57,20 +61,27 @@ export function getTestStatus(test: ScheduledTest): TestStatus {
   if (now >= scheduledTime && now < endTime && test.status === "in_progress") {
     return {
       status: "in_progress",
-      canJoin: true,
+      canJoin: now <= accessWindowEnd,
     };
   }
 
-  // Test is scheduled (upcoming)
+  // Scheduled
   const timeDiff = scheduledTime.getTime() - now.getTime();
-  const hours = Math.floor(timeDiff / (1000 * 60 * 60));
-  const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+  const totalMinutes = Math.floor(timeDiff / (1000 * 60));
+
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+
+  const accessWindowMs = EARLY_ACCESS_MINUTES * 60 * 1000;
 
   if (test.status === "scheduled") {
     return {
       status: "scheduled",
-      countdown: `Starts in ${hours}h ${minutes}m`,
-      canJoin: timeDiff <= 15 * 60 * 1000 && timeDiff >= -60 * 60 * 1000, // Allow up to 1 hour late
+      countdown: `Starts in ${days}d ${hours}h ${minutes}m`,
+      canJoin:
+        now >= scheduledTime &&
+        now <= new Date(scheduledTime.getTime() + accessWindowMs),
     };
   }
 
@@ -100,16 +111,17 @@ export async function fetchScheduledTests(
       return { tests: [], error: "Center not found" };
     }
 
-    // Get current date for filtering
+    // Get start of today in UTC (not local) to avoid timezone filtering issues
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Subtract early access window + some buffer so we don't accidentally filter out today's tests
+    const filterDate = new Date(today.getTime() - 24 * 60 * 60 * 1000);
 
     // Fetch scheduled tests using security view (OTP excluded)
     const { data, error } = await supabase
       .from("available_tests_view")
       .select("*")
       .eq("center_id", center.center_id)
-      .gte("scheduled_at", today.toISOString())
+      .gte("scheduled_at", filterDate.toISOString())
       .in("status", ["scheduled", "in_progress"])
       .order("scheduled_at", { ascending: true });
 

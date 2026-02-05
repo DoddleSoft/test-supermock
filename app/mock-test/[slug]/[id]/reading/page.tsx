@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { ExamProvider } from "@/context/ExamContext";
 import { loadExamData } from "@/app/actions/exam";
+import { validateScheduledTestAccess } from "@/utils/validateTestAccess";
+import TestExpiredScreen from "@/component/exam/TestExpiredScreen";
 import ReadingTestClient from "./ReadingTestClient";
 
 interface ReadingPageProps {
@@ -9,6 +11,20 @@ interface ReadingPageProps {
 
 export default async function ReadingPage({ params }: ReadingPageProps) {
   const { slug, id } = await params;
+
+  // CRITICAL SECURITY CHECK: Validate scheduled test access
+  const validation = await validateScheduledTestAccess(id);
+
+  if (!validation.isValid) {
+    return (
+      <TestExpiredScreen
+        message={validation.error}
+        testTitle={validation.scheduledTest?.title}
+        endedAt={validation.scheduledTest?.ended_at}
+        centerSlug={slug}
+      />
+    );
+  }
 
   // Load exam data using server action
   const examData = await loadExamData(id);

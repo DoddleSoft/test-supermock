@@ -496,15 +496,22 @@ export function ExamProvider({
     try {
       setState((prev) => ({ ...prev, isSaving: true }));
 
-      const answersToSave = Array.from(state.answers.values()).map((ans) => ({
-        attempt_module_id: state.currentAttemptModule!.id,
-        reference_id: ans.sub_section_id,
-        question_ref: ans.question_ref,
-        student_response:
-          typeof ans.student_response === "string"
-            ? ans.student_response
-            : JSON.stringify(ans.student_response),
-      }));
+      const answersToSave = Array.from(state.answers.values())
+        .filter((ans) => ans.sub_section_id && ans.question_ref)
+        .map((ans) => ({
+          attempt_module_id: state.currentAttemptModule!.id,
+          reference_id: ans.sub_section_id,
+          question_ref: ans.question_ref,
+          student_response:
+            typeof ans.student_response === "string"
+              ? ans.student_response
+              : JSON.stringify(ans.student_response),
+        }));
+
+      if (answersToSave.length === 0) {
+        setState((prev) => ({ ...prev, isSaving: false }));
+        return;
+      }
 
       // Batch upsert all answers in one query
       const { error } = await supabase
@@ -513,11 +520,14 @@ export function ExamProvider({
           onConflict: "attempt_module_id,reference_id,question_ref",
         });
 
-      if (error) throw error;
+      if (error) {
+        console.error("Error saving answers:", error.message);
+        throw error;
+      }
 
       setState((prev) => ({ ...prev, isSaving: false }));
     } catch (error: any) {
-      console.error("Error saving progress:", error);
+      console.error("Error saving progress:", error?.message || error);
       setState((prev) => ({ ...prev, isSaving: false }));
     }
   }, [state.currentAttemptModule, state.answers, supabase]);
@@ -549,18 +559,44 @@ export function ExamProvider({
       try {
         setState((prev) => ({ ...prev, isLoading: true }));
 
-        // 1. Final sync of timer to database
+        // 1. Calculate time spent
+        const startedAt = state.currentAttemptModule.started_at
+          ? new Date(state.currentAttemptModule.started_at).getTime()
+          : Date.now();
+        const timeSpentSeconds = Math.floor((Date.now() - startedAt) / 1000);
+
+        // 2. Final sync of timer to database
         await supabase
           .from("attempt_modules")
           .update({
             time_remaining_seconds: state.timeLeft,
+            time_spent_seconds:
+              state.currentAttemptModule.time_spent_seconds + timeSpentSeconds,
           })
           .eq("id", state.currentAttemptModule.id);
 
         // 2. Batch insert all answers to database
         if (state.answers.size > 0) {
-          const answersToSave = Array.from(state.answers.values()).map(
-            (ans) => ({
+          const answersToSave = Array.from(state.answers.values())
+            .filter((ans) => {
+              // Validate that required fields are present
+              if (!ans.sub_section_id) {
+                console.warn(
+                  "[submitModule] Skipping answer with null reference_id:",
+                  ans,
+                );
+                return false;
+              }
+              if (!ans.question_ref) {
+                console.warn(
+                  "[submitModule] Skipping answer with null question_ref:",
+                  ans,
+                );
+                return false;
+              }
+              return true;
+            })
+            .map((ans) => ({
               attempt_module_id: state.currentAttemptModule!.id,
               reference_id: ans.sub_section_id,
               question_ref: ans.question_ref,
@@ -568,16 +604,23 @@ export function ExamProvider({
                 typeof ans.student_response === "string"
                   ? ans.student_response
                   : JSON.stringify(ans.student_response),
-            }),
-          );
+            }));
 
-          const { error: answersError } = await supabase
-            .from("student_answers")
-            .upsert(answersToSave, {
-              onConflict: "attempt_module_id,reference_id,question_ref",
-            });
+          if (answersToSave.length === 0) {
+            console.warn("[submitModule] No valid answers to save");
+          } else {
+            const { error: answersError } = await supabase
+              .from("student_answers")
+              .upsert(answersToSave, {
+                onConflict: "attempt_module_id,reference_id,question_ref",
+              });
 
-          if (answersError) throw answersError;
+            if (answersError) {
+              throw new Error(
+                `Failed to save answers: ${answersError.message}`,
+              );
+            }
+          }
         }
 
         // 3. Call backend grading API for automatic evaluation
@@ -600,14 +643,19 @@ export function ExamProvider({
         }
 
         // 4. Update attempt_module status to completed
+        const completedAt = new Date().toISOString();
+        const finalTimeSpent =
+          state.currentAttemptModule.time_spent_seconds + timeSpentSeconds;
+
         const { error: updateError } = await supabase
           .from("attempt_modules")
           .update({
             status: "completed",
-            completed_at: new Date().toISOString(),
+            completed_at: completedAt,
             band_score: result.bandScore || null,
             score_obtained: result.totalScore || 0,
             time_remaining_seconds: 0,
+            time_spent_seconds: finalTimeSpent,
           })
           .eq("id", state.currentAttemptModule.id);
 
@@ -660,15 +708,15 @@ export function ExamProvider({
 
         return { ...result, nextModuleUrl: nextModuleUrl || undefined };
       } catch (error: any) {
-        console.error("Error submitting module:", error);
+        console.error("Error submitting module:", error?.message || error);
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: error.message,
+          error: error?.message || "Unknown error occurred",
         }));
         return {
           success: false,
-          error: error.message,
+          error: error?.message || "Unknown error occurred",
         };
       }
     },
@@ -969,10 +1017,6 @@ export function ExamProvider({
           loadedModulesRef.current.has(moduleId) &&
           state.currentModuleId === moduleId
         ) {
-          console.log(
-            "[loadModule] Module already loaded, skipping:",
-            moduleId,
-          );
           return;
         }
 
@@ -1059,17 +1103,6 @@ export function ExamProvider({
             ),
         );
 
-        // Debug: Log question options to verify they're loaded
-        console.log(
-          "[loadModule] Question answers with options:",
-          questionAnswers.slice(0, 5).map((qa) => ({
-            ref: qa.question_ref,
-            hasOptions: !!qa.options,
-            optionsCount: qa.options?.length || 0,
-            firstOption: qa.options?.[0],
-          })),
-        );
-
         // Load existing answers from localStorage or database
         const localKey = `exam_${state.attemptId}_${moduleId}`;
         const localData = localStorage.getItem(localKey);
@@ -1105,11 +1138,13 @@ export function ExamProvider({
             .update({
               status: "in_progress",
               started_at: now,
+              time_spent_seconds: 0,
             })
             .eq("id", attemptModule.id);
 
           attemptModule.status = "in_progress";
           attemptModule.started_at = now;
+          attemptModule.time_spent_seconds = 0;
         }
 
         // Initialize timer with remaining time from database
@@ -1173,18 +1208,28 @@ export function ExamProvider({
       subSectionId: string,
       response: string | string[],
     ) => {
+      // Validate required parameters
+      if (!questionRef) {
+        return;
+      }
+      if (!subSectionId) {
+        return;
+      }
+
       // Use functional update to access the *current* answers without adding state.answers to dependency array
       setState((prev) => {
         const key = `${subSectionId}_${questionRef}`;
         const newAnswers = new Map(prev.answers); // Create copy from prev state
 
-        newAnswers.set(key, {
+        const answerData = {
           question_ref: questionRef,
           sub_section_id: subSectionId,
           student_response: response,
           timestamp: Date.now(),
           is_flagged: newAnswers.get(key)?.is_flagged || false,
-        });
+        };
+
+        newAnswers.set(key, answerData);
 
         return { ...prev, answers: newAnswers };
       });

@@ -1,6 +1,8 @@
 import { notFound } from "next/navigation";
 import { ExamProvider } from "@/context/ExamContext";
 import { loadExamData } from "@/app/actions/exam";
+import { validateScheduledTestAccess } from "@/utils/validateTestAccess";
+import TestExpiredScreen from "@/component/exam/TestExpiredScreen";
 import ListeningTestClient from "./ListeningTestClient";
 
 interface ListeningPageProps {
@@ -9,6 +11,21 @@ interface ListeningPageProps {
 
 export default async function ListeningPage({ params }: ListeningPageProps) {
   const { slug, id } = await params;
+
+  // CRITICAL SECURITY CHECK: Validate scheduled test access
+  const validation = await validateScheduledTestAccess(id);
+
+  if (!validation.isValid) {
+    return (
+      <TestExpiredScreen
+        message={validation.error}
+        testTitle={validation.scheduledTest?.title}
+        endedAt={validation.scheduledTest?.ended_at}
+        centerSlug={slug}
+      />
+    );
+  }
+
   const examData = await loadExamData(id);
 
   if (!examData.success || !examData.data) {

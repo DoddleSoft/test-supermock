@@ -27,7 +27,6 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
     currentSectionIndex,
     setCurrentSection,
     loadModule,
-    startTimer,
     attemptId,
     currentAttemptModule,
     submitModule,

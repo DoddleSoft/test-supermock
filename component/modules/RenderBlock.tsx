@@ -57,13 +57,13 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
   const { type, content } = block;
   const colors = themeColors[theme];
 
-  // Parse placeholders like {{1}boolean}, {{8}blanks}, {{14}dropdown}, {{3}true-false}, {{23}mcq}
+  // Parse placeholders like {{8}blanks}, {{3}true-false}, {{23}mcq}
   const renderContent = (text: string) => {
     if (!onAnswerChange) {
       return <>{text}</>;
     }
 
-    const regex = /{{(\d+)}(boolean|blanks|dropdown|true-false|mcq)}/g;
+    const regex = /{{(\d+)}(blanks|true-false|mcq)}/g;
 
     const parts: React.ReactElement[] = [];
     let lastIndex = 0;
@@ -99,36 +99,6 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
             >
               <option value="">Select...</option>
               {options.map((opt: any) => {
-                const value = typeof opt === "string" ? opt : opt.label;
-                const label =
-                  typeof opt === "string"
-                    ? opt
-                    : `${opt.label}${opt.text ? ` ${opt.text}` : ""}`;
-                return (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                );
-              })}
-            </select>
-          </span>,
-        );
-      } else if (inputType === "boolean" && qData?.options) {
-        // Render dropdown for TRUE/FALSE/NOT GIVEN or YES/NO/NOT GIVEN
-        parts.push(
-          <span key={`q-${qNum}`} className="inline-flex items-center gap-1">
-            {showQuestionNumbers && (
-              <span className="text-xs font-semibold text-gray-600">
-                {qNum}.
-              </span>
-            )}
-            <select
-              value={answers[qNum] || ""}
-              onChange={(e) => onAnswerChange(qNum, e.target.value)}
-              className={`mx-1 inline-block min-w-[140px] rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-1 ${colors.focus}`}
-            >
-              <option value="">Select...</option>
-              {qData.options.map((opt: any) => {
                 const value = typeof opt === "string" ? opt : opt.label;
                 const label =
                   typeof opt === "string"
@@ -239,36 +209,6 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
             </span>,
           );
         }
-      } else if (inputType === "dropdown" && qData?.options) {
-        // Render dropdown for MCQ options (i, ii, iii, A, B, C, etc.)
-        parts.push(
-          <span key={`q-${qNum}`} className="inline-flex items-center gap-1">
-            {showQuestionNumbers && (
-              <span className="text-xs font-semibold text-gray-600">
-                {qNum}.
-              </span>
-            )}
-            <select
-              value={answers[qNum] || ""}
-              onChange={(e) => onAnswerChange(qNum, e.target.value)}
-              className={`mx-1 inline-block min-w-[100px] rounded border border-gray-300 bg-white px-2 py-1 text-xs font-medium text-gray-700 shadow-sm focus:outline-none focus:ring-1 ${colors.focus}`}
-            >
-              <option value="">Select...</option>
-              {qData.options.map((opt: any) => {
-                const value = typeof opt === "string" ? opt : opt.label;
-                const label =
-                  typeof opt === "string"
-                    ? opt
-                    : `${opt.label}${opt.text ? ` ${opt.text}` : ""}`;
-                return (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                );
-              })}
-            </select>
-          </span>,
-        );
       } else if (inputType === "blanks") {
         // Render text input for fill-in-the-blank with question number
         parts.push(

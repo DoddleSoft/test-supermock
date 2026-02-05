@@ -1,18 +1,18 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
-import { Menu, X } from "lucide-react";
 import Image from "next/image";
 
 interface ReadingNavbarProps {
   timeLeft?: number;
   questions?: string;
+  onSubmit?: () => void;
 }
 
 export default function ReadingNavbar({
   timeLeft = 0,
   questions,
+  onSubmit,
 }: ReadingNavbarProps) {
   const [scrolled, setScrolled] = useState(false);
 
@@ -80,12 +80,12 @@ export default function ReadingNavbar({
               {formatTime(timeLeft)}
             </p>
 
-            <Link
-              href="/auth/login"
+            <button
+              onClick={onSubmit}
               className="hidden sm:block px-4 py-2 md:px-5 text-xs md:text-sm font-semibold text-white transition-all bg-gradient-to-r from-red-600 to-red-900 rounded-xl hover:from-red-700 hover:to-red-800 hover:shadow-sm hover:shadow-red-500/30 active:scale-95"
             >
               Submit Test
-            </Link>
+            </button>
           </div>
         </div>
       </div>
