@@ -87,7 +87,39 @@ export async function validateScheduledTestAccess(
       };
     }
 
+    // CRITICAL CHECK 1.5: Check if user has already started any modules
+    // If they have, allow access (this is a refresh/continuation)
+    const { data: attemptModules } = await supabase
+      .from("attempt_modules")
+      .select("id, status, time_remaining_seconds, started_at")
+      .eq("attempt_id", attemptId)
+      .in("status", ["in_progress", "pending", "completed"]);
+
+    if (attemptModules && attemptModules.length > 0) {
+      // User has started the exam - check if there's still time remaining
+      const hasActiveModule = attemptModules.some(
+        (m: any) =>
+          m.status === "in_progress" &&
+          m.time_remaining_seconds &&
+          m.time_remaining_seconds > 0,
+      );
+
+      const hasStartedModules = attemptModules.some(
+        (m: any) => m.started_at !== null,
+      );
+
+      // If they've started modules, allow re-entry regardless of the entry window
+      // (They're refreshing mid-exam, not trying to enter a closed test)
+      if (hasActiveModule || hasStartedModules) {
+        return {
+          isValid: true,
+          scheduledTest: normalizedScheduledTest,
+        };
+      }
+    }
+
     // CRITICAL CHECK 2: Test must be accessible (scheduled time up to 30 minutes after)
+    // This only applies to NEW entries, not refreshes during active exams
     if (!isTestAccessible(scheduledTest.scheduled_at, scheduledTest.ended_at)) {
       const now = new Date();
 

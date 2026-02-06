@@ -563,150 +563,78 @@ export function ExamProvider({
         const startedAt = state.currentAttemptModule.started_at
           ? new Date(state.currentAttemptModule.started_at).getTime()
           : Date.now();
-        const timeSpentSeconds = Math.floor((Date.now() - startedAt) / 1000);
+        const additionalTimeSpent = Math.floor((Date.now() - startedAt) / 1000);
+        const totalTimeSpent =
+          (state.currentAttemptModule.time_spent_seconds || 0) +
+          additionalTimeSpent;
 
-        // 2. Final sync of timer to database
-        await supabase
-          .from("attempt_modules")
-          .update({
-            time_remaining_seconds: state.timeLeft,
-            time_spent_seconds:
-              state.currentAttemptModule.time_spent_seconds + timeSpentSeconds,
-          })
-          .eq("id", state.currentAttemptModule.id);
-
-        // 2. Batch insert all answers to database
-        if (state.answers.size > 0) {
-          const answersToSave = Array.from(state.answers.values())
-            .filter((ans) => {
-              // Validate that required fields are present
-              if (!ans.sub_section_id) {
-                console.warn(
-                  "[submitModule] Skipping answer with null reference_id:",
-                  ans,
-                );
-                return false;
-              }
-              if (!ans.question_ref) {
-                console.warn(
-                  "[submitModule] Skipping answer with null question_ref:",
-                  ans,
-                );
-                return false;
-              }
-              return true;
-            })
-            .map((ans) => ({
-              attempt_module_id: state.currentAttemptModule!.id,
-              reference_id: ans.sub_section_id,
-              question_ref: ans.question_ref,
-              student_response:
-                typeof ans.student_response === "string"
-                  ? ans.student_response
-                  : JSON.stringify(ans.student_response),
-            }));
-
-          if (answersToSave.length === 0) {
-            console.warn("[submitModule] No valid answers to save");
-          } else {
-            const { error: answersError } = await supabase
-              .from("student_answers")
-              .upsert(answersToSave, {
-                onConflict: "attempt_module_id,reference_id,question_ref",
-              });
-
-            if (answersError) {
-              throw new Error(
-                `Failed to save answers: ${answersError.message}`,
+        // 2. Collect answers from state for the API
+        const answersPayload = Array.from(state.answers.values())
+          .filter((ans) => {
+            if (!ans.sub_section_id || !ans.question_ref) {
+              console.warn(
+                "[submitModule] Skipping answer with missing fields:",
+                ans,
               );
+              return false;
             }
-          }
-        }
+            return true;
+          })
+          .map((ans) => ({
+            reference_id: ans.sub_section_id,
+            question_ref: ans.question_ref,
+            student_response:
+              typeof ans.student_response === "string"
+                ? ans.student_response
+                : JSON.stringify(ans.student_response),
+          }));
 
-        // 3. Call backend grading API for automatic evaluation
+        // 3. Single API call: saves answers, grades, updates status, handles flow
         const gradingResponse = await fetch("/api/grading", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             attemptModuleId: state.currentAttemptModule.id,
+            answers: answersPayload,
+            autoSubmit,
+            timeSpentSeconds: totalTimeSpent,
+            timeRemainingSeconds: state.timeLeft,
           }),
         });
 
-        if (!gradingResponse.ok) {
-          throw new Error("Grading API failed");
-        }
-
         const result = await gradingResponse.json();
 
-        if (!result.success) {
-          throw new Error(result.error || "Failed to grade module");
-        }
-
-        // 4. Update attempt_module status to completed
-        const completedAt = new Date().toISOString();
-        const finalTimeSpent =
-          state.currentAttemptModule.time_spent_seconds + timeSpentSeconds;
-
-        const { error: updateError } = await supabase
-          .from("attempt_modules")
-          .update({
-            status: "completed",
-            completed_at: completedAt,
-            band_score: result.bandScore || null,
-            score_obtained: result.totalScore || 0,
-            time_remaining_seconds: 0,
-            time_spent_seconds: finalTimeSpent,
-          })
-          .eq("id", state.currentAttemptModule.id);
-
-        if (updateError) throw updateError;
-
-        // 5. Determine next module URL
-        const currentModuleType = state.currentModule?.module_type;
-        const moduleOrder = ["listening", "reading", "writing", "speaking"];
-        const currentIndex = moduleOrder.indexOf(currentModuleType || "");
-        let nextModuleUrl: string | null = null;
-
-        if (currentIndex >= 0 && currentIndex < moduleOrder.length - 1) {
-          const nextModuleType = moduleOrder[currentIndex + 1];
-          const nextModule = state.modules.find(
-            (m) => m.module_type === nextModuleType,
+        if (!gradingResponse.ok || !result.success) {
+          throw new Error(
+            result.error || `Grading failed (HTTP ${gradingResponse.status})`,
           );
-          if (nextModule && state.centerSlug && state.attemptId) {
-            nextModuleUrl = `/mock-test/${state.centerSlug}/${state.attemptId}/${nextModuleType}`;
-          }
         }
 
-        // 6. Clear localStorage for this module
+        console.log("[ExamContext] Grading result:", result);
+
+        // 4. Clear localStorage for this module
         const localKey = `exam_${state.attemptId}_${state.currentModuleId}`;
         localStorage.removeItem(localKey);
 
-        // Clear answer storage
         if (state.attemptId) {
           const answerStorageKey = `exam_answers_${state.attemptId}`;
           localStorage.removeItem(answerStorageKey);
         }
 
-        // 7. Stop timer
+        // 5. Stop timer
         if (timerRef.current) {
           clearInterval(timerRef.current);
         }
 
-        // 8. Show dialog if auto-submitted
-        const dialogMessage = autoSubmit
-          ? "Time's up! Your answers have been submitted to the center for evaluation."
-          : null;
-
+        // 6. Update state (no automatic navigation - let client handle it)
         setState((prev) => ({
           ...prev,
           isLoading: false,
           isTimerRunning: false,
-          answers: new Map(), // Clear answers from state
-          showSubmitDialog: autoSubmit,
-          submitDialogMessage: dialogMessage,
+          answers: new Map(),
         }));
 
-        return { ...result, nextModuleUrl: nextModuleUrl || undefined };
+        return result;
       } catch (error: any) {
         console.error("Error submitting module:", error?.message || error);
         setState((prev) => ({
@@ -729,7 +657,6 @@ export function ExamProvider({
       state.centerSlug,
       state.answers,
       state.timeLeft,
-      supabase,
     ],
   );
 
@@ -1120,10 +1047,25 @@ export function ExamProvider({
 
           if (studentAnswers) {
             studentAnswers.forEach((ans) => {
+              // Parse student_response if it's a JSON string
+              let parsedResponse = ans.student_response;
+              if (
+                typeof ans.student_response === "string" &&
+                (ans.student_response.startsWith("[") ||
+                  ans.student_response.startsWith("{"))
+              ) {
+                try {
+                  parsedResponse = JSON.parse(ans.student_response);
+                } catch {
+                  // Keep as string if parsing fails
+                  parsedResponse = ans.student_response;
+                }
+              }
+
               answersMap.set(`${ans.sub_section_id}_${ans.question_ref}`, {
                 question_ref: ans.question_ref,
                 sub_section_id: ans.sub_section_id,
-                student_response: ans.student_response,
+                student_response: parsedResponse,
                 timestamp: Date.now(),
               });
             });

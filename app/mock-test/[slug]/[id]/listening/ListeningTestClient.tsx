@@ -206,12 +206,24 @@ export default function ListeningTestClient({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [currentAttemptModule, attemptId]);
 
-  const buildBlocks = (template?: string | null, subType?: string | null) => {
-    if (!template) return [] as Array<{ type: string; content?: string }>;
+  const buildBlocks = (
+    template?: string | null,
+    subType?: string | null,
+    instruction?: string | null,
+  ) => {
+    const blocks: Array<{ type: string; content?: string }> = [];
+
+    // Add instruction as first block if it exists
+    if (instruction) {
+      blocks.push({ type: "instruction", content: instruction });
+    }
+
+    if (!template) return blocks;
+
     try {
       const parsed = JSON.parse(template);
-      if (Array.isArray(parsed)) return parsed;
-      if (parsed?.type) return [parsed];
+      if (Array.isArray(parsed)) return [...blocks, ...parsed];
+      if (parsed?.type) return [...blocks, parsed];
     } catch {
       // fall through
     }
@@ -229,16 +241,39 @@ export default function ListeningTestClient({
       (template.includes("/image/") ||
         template.match(/\.(jpg|jpeg|png|gif|webp)$/i))
     ) {
-      return [{ type: "image", content: template }];
+      blocks.push({ type: "image", content: template });
+      return blocks;
     }
     const type = subType && allowed.has(subType) ? subType : "text";
-    return [{ type, content: template }];
+    blocks.push({ type, content: template });
+    return blocks;
   };
 
-  const audioPath =
-    currentSection?.resource_url ||
-    sectionSubSections.find((ss) => ss.resource_url)?.resource_url ||
-    "";
+  const audioPath = useMemo(() => {
+    // Check section resource_url first
+    if (currentSection?.resource_url) {
+      const url = currentSection.resource_url;
+      // Check if it's an audio file
+      if (url.match(/\.(mp3|mpeg|wav|ogg|m4a)$/i) || url.includes("/audio/")) {
+        return url;
+      }
+    }
+
+    // Check subsections
+    const subsectionAudio = sectionSubSections.find((ss) => {
+      if (!ss.resource_url) return false;
+      const url = ss.resource_url;
+      return url.match(/\.(mp3|mpeg|wav|ogg|m4a)$/i) || url.includes("/audio/");
+    })?.resource_url;
+
+    if (subsectionAudio) return subsectionAudio;
+
+    console.warn(
+      "[Listening] No audio file found for section:",
+      currentSection?.id,
+    );
+    return "";
+  }, [currentSection, sectionSubSections]);
 
   // Handle section navigation with warning
   const handleSectionChange = (newIndex: number) => {
@@ -284,6 +319,15 @@ export default function ListeningTestClient({
   useEffect(() => {
     if (moduleLoaded && sections.length > 0 && audioRef.current && audioPath) {
       const audio = audioRef.current;
+
+      // Add error handler
+      const handleError = (e: Event) => {
+        console.error("[Listening] Audio error:", e);
+        toast.error("Failed to load audio. Please check your connection.");
+        setIsPlaying(false);
+      };
+
+      audio.addEventListener("error", handleError);
       audio.load();
 
       const savedTime = audioTimesRef.current[currentSection?.id || ""] || 0;
@@ -295,6 +339,7 @@ export default function ListeningTestClient({
           setIsPlaying(true);
         } catch (err) {
           console.error("Audio autoplay failed:", err);
+          toast.warning("Click the play button to start audio");
           setIsPlaying(false);
         }
       };
@@ -334,9 +379,12 @@ export default function ListeningTestClient({
         audio.removeEventListener("pause", handlePause);
         audio.removeEventListener("ended", handleEnded);
         audio.removeEventListener("timeupdate", handleTimeUpdate);
+        audio.removeEventListener("error", handleError);
       };
     }
   }, [moduleLoaded, sections.length, audioPath, currentSection?.id]);
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Handle submit
   const handleSubmit = async () => {
@@ -344,6 +392,8 @@ export default function ListeningTestClient({
       toast.error("No active module to submit");
       return;
     }
+
+    setIsSubmitting(true);
 
     // First sync local storage to database
     if (attemptId) {
@@ -355,22 +405,39 @@ export default function ListeningTestClient({
       success: (result) => {
         if (result.success) {
           setTimeout(() => {
-            router.push(`/mock-test/${slug}/profile`);
+            router.push(`/mock-test/${slug}/${attemptId}`);
           }, 1500);
-          return `Module submitted! Score: ${result.totalScore}/${result.maxScore}`;
+          return `Module submitted successfully!`;
         }
         return "Submission completed";
       },
-      error: (err) => `Submission failed: ${err}`,
+      error: (err) => {
+        setIsSubmitting(false);
+        return `Submission failed: ${err}`;
+      },
     });
   };
 
   return (
     <div className="min-h-screen bg-white">
+      {/* Full-screen loading overlay during submission */}
+      {isSubmitting && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center">
+          <div className="bg-white rounded-2xl p-8 shadow-2xl flex flex-col items-center gap-4">
+            <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-lg font-semibold text-gray-900">
+              Please wait while we load other modules...
+            </p>
+            <p className="text-sm text-gray-600">Do not close this window</p>
+          </div>
+        </div>
+      )}
+
       <ListeningNavbar
         timeLeft={timeLeft}
         questions={`${sectionQuestions.length} Qs`}
         onSubmit={handleSubmit}
+        isSubmitting={isSubmitting}
       />
 
       <main className="mx-auto max-w-7xl pt-28 px-4">
@@ -439,8 +506,16 @@ export default function ListeningTestClient({
                     </div>
                   </>
                 ) : (
-                  <div className="text-sm text-gray-600 text-center">
-                    Audio not available for this section.
+                  <div className="rounded-lg bg-red-50 border border-red-200 p-6 text-center">
+                    <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-3" />
+                    <p className="text-sm font-semibold text-red-900 mb-2">
+                      Audio Not Available
+                    </p>
+                    <p className="text-xs text-red-700">
+                      The audio file for this section could not be loaded.
+                      Please contact your administrator or try refreshing the
+                      page.
+                    </p>
                   </div>
                 )}
               </div>
@@ -473,6 +548,7 @@ export default function ListeningTestClient({
                   const blocks = buildBlocks(
                     subSection.content_template ?? "",
                     subSection.sub_type ?? null,
+                    subSection.instruction ?? null,
                   );
                   return (
                     <div key={subSection.id} className="space-y-2">
@@ -480,14 +556,6 @@ export default function ListeningTestClient({
                         <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
                           {subSection.boundary_text}
                         </h4>
-                      )}
-
-                      {subSection.instruction && (
-                        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 rounded my-2">
-                          <p className="text-sm text-gray-800 font-medium">
-                            {subSection.instruction}
-                          </p>
-                        </div>
                       )}
 
                       {subSection.resource_url &&

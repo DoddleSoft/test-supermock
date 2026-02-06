@@ -160,6 +160,12 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
             // Render as radio buttons for multi-word options
             parts.push(
               <div key={`q-${qNum}`} className="my-4 pl-0">
+                {/* Question Number Display */}
+                <div className="mb-2">
+                  <span className="text-sm font-bold text-gray-900">
+                    {qNum}.
+                  </span>
+                </div>
                 <div className="space-y-2">
                   {qData!.options!.map((opt: any) => {
                     const value = typeof opt === "string" ? opt : opt.label;
@@ -210,7 +216,6 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
           );
         }
       } else if (inputType === "blanks") {
-        // Render text input for fill-in-the-blank with question number
         parts.push(
           <span key={`q-${qNum}`} className="inline-flex items-center gap-1">
             <span className="text-xs font-semibold text-gray-600">{qNum}.</span>

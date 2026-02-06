@@ -217,12 +217,16 @@ export default function ReadingTestClient({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [currentAttemptModule, attemptId]);
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   // Handle submit - matches listening module logic
   const handleSubmit = async () => {
     if (!currentAttemptModule?.id) {
       toast.error("No active module to submit");
       return;
     }
+
+    setIsSubmitting(true);
 
     // First sync local storage to database
     if (attemptId) {
@@ -234,22 +238,37 @@ export default function ReadingTestClient({
       success: (result) => {
         if (result.success) {
           setTimeout(() => {
-            router.push(`/mock-test/${centerSlug}/profile`);
+            router.push(`/mock-test/${centerSlug}/${attemptId}`);
           }, 1500);
-          return `Module submitted! Score: ${result.totalScore}/${result.maxScore}`;
+          return `Module submitted successfully!`;
         }
         return "Submission completed";
       },
-      error: (err) => `Submission failed: ${err}`,
+      error: (err) => {
+        setIsSubmitting(false);
+        return `Submission failed: ${err}`;
+      },
     });
   };
 
-  const buildBlocks = (template?: string | null, subType?: string | null) => {
-    if (!template) return [] as Array<{ type: string; content?: string }>;
+  const buildBlocks = (
+    template?: string | null,
+    subType?: string | null,
+    instruction?: string | null,
+  ) => {
+    const blocks: Array<{ type: string; content?: string }> = [];
+
+    // Add instruction as first block if it exists
+    if (instruction) {
+      blocks.push({ type: "instruction", content: instruction });
+    }
+
+    if (!template) return blocks;
+
     try {
       const parsed = JSON.parse(template);
-      if (Array.isArray(parsed)) return parsed;
-      if (parsed?.type) return [parsed];
+      if (Array.isArray(parsed)) return [...blocks, ...parsed];
+      if (parsed?.type) return [...blocks, parsed];
     } catch {
       // fall through
     }
@@ -263,7 +282,8 @@ export default function ReadingTestClient({
       "image",
     ]);
     const type = subType && allowed.has(subType) ? subType : "text";
-    return [{ type, content: template }];
+    blocks.push({ type, content: template });
+    return blocks;
   };
 
   const buildPassageBlocks = (content?: string | null) => {
@@ -280,6 +300,19 @@ export default function ReadingTestClient({
 
   return (
     <div className="min-h-screen bg-white">
+      {/* Full-screen loading overlay during submission */}
+      {isSubmitting && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center">
+          <div className="bg-white rounded-2xl p-8 shadow-2xl flex flex-col items-center gap-4">
+            <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-lg font-semibold text-gray-900">
+              Please wait while we load other modules...
+            </p>
+            <p className="text-sm text-gray-600">Do not close this window</p>
+          </div>
+        </div>
+      )}
+
       <ReadingNavbar
         timeLeft={timeLeft}
         questions={
@@ -288,6 +321,7 @@ export default function ReadingTestClient({
             : undefined
         }
         onSubmit={handleSubmit}
+        isSubmitting={isSubmitting}
       />
 
       <main className="mx-auto max-w-7xl pt-28 px-4">
@@ -352,6 +386,7 @@ export default function ReadingTestClient({
                   const blocks = buildBlocks(
                     subSection.content_template ?? "",
                     subSection.sub_type ?? null,
+                    subSection.instruction ?? null,
                   );
 
                   return (
@@ -360,14 +395,6 @@ export default function ReadingTestClient({
                         <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
                           {subSection.boundary_text}
                         </h4>
-                      )}
-
-                      {subSection.instruction && (
-                        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 rounded my-2">
-                          <p className="text-sm text-gray-800 font-medium">
-                            {subSection.instruction}
-                          </p>
-                        </div>
                       )}
 
                       {blocks.map((block, idx) => (

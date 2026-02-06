@@ -9,12 +9,14 @@ interface ListeningNavbarProps {
   timeLeft?: number;
   questions?: string;
   onSubmit?: () => void;
+  isSubmitting?: boolean;
 }
 
 export default function ListeningNavbar({
   timeLeft = 0,
   questions,
   onSubmit,
+  isSubmitting = false,
 }: ListeningNavbarProps) {
   const [scrolled, setScrolled] = useState(false);
 
@@ -84,9 +86,10 @@ export default function ListeningNavbar({
 
             <button
               onClick={onSubmit}
-              className="hidden sm:block px-4 py-2 md:px-5 text-xs md:text-sm font-semibold text-white transition-all bg-gradient-to-r from-red-600 to-red-900 rounded-xl hover:from-red-700 hover:to-red-800 hover:shadow-sm hover:shadow-red-500/30 active:scale-95"
+              disabled={isSubmitting}
+              className="hidden sm:block px-4 py-2 md:px-5 text-xs md:text-sm font-semibold text-white transition-all bg-gradient-to-r from-red-600 to-red-900 rounded-xl hover:from-red-700 hover:to-red-800 hover:shadow-sm hover:shadow-red-500/30 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Submit Test
+              {isSubmitting ? "Submitting..." : "Submit Test"}
             </button>
           </div>
         </div>

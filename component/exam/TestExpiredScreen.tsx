@@ -20,7 +20,7 @@ export default function TestExpiredScreen({
 
   const handleGoHome = () => {
     if (centerSlug) {
-      router.push(`/mock-test/${centerSlug}/profile`);
+      router.push(`/mock-test/${centerSlug}`);
     } else {
       router.push("/");
     }

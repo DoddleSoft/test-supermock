@@ -26,6 +26,7 @@ export interface TestStatus {
   status: "scheduled" | "in_progress" | "completed" | "cancelled";
   countdown?: string;
   canJoin: boolean;
+  message?: string; // ✅ add this
 }
 
 /**
@@ -34,60 +35,72 @@ export interface TestStatus {
 export function getTestStatus(test: ScheduledTest): TestStatus {
   const now = new Date();
   const scheduledTime = new Date(test.scheduled_at);
+
   const endTime = new Date(
     scheduledTime.getTime() + test.duration_minutes * 60000,
   );
-  const accessWindowEnd = new Date(
-    scheduledTime.getTime() + EARLY_ACCESS_MINUTES * 60 * 1000,
+
+  const joinCutoffTime = new Date(
+    scheduledTime.getTime() + 30 * 60 * 1000, // 30 min after start
   );
 
-  // Test is cancelled
+  // Cancelled
   if (test.status === "cancelled") {
     return {
       status: "cancelled",
       canJoin: false,
+      message: "Test cancelled",
     };
   }
 
-  // Test has ended or completed
+  // Test fully ended
   if (now >= endTime || test.status === "completed") {
     return {
       status: "completed",
       canJoin: false,
+      message: "Test ended",
     };
   }
 
-  // Test is in progress (live)
-  if (now >= scheduledTime && now < endTime && test.status === "in_progress") {
+  // Test started but join window closed (after 30 min)
+  if (now >= joinCutoffTime && now < endTime) {
     return {
       status: "in_progress",
-      canJoin: now <= accessWindowEnd,
+      canJoin: false,
+      message: "Cannot join the test now",
     };
   }
 
-  // Scheduled
-  const timeDiff = scheduledTime.getTime() - now.getTime();
-  const totalMinutes = Math.floor(timeDiff / (1000 * 60));
+  // Test live and join allowed
+  if (now >= scheduledTime && now < joinCutoffTime) {
+    return {
+      status: "in_progress",
+      canJoin: true,
+      message: "Test in progress",
+    };
+  }
 
-  const days = Math.floor(totalMinutes / (60 * 24));
-  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
-  const minutes = totalMinutes % 60;
+  // Scheduled (before start)
+  if (now < scheduledTime) {
+    const diffMs = scheduledTime.getTime() - now.getTime();
+    const totalMinutes = Math.floor(diffMs / 60000);
 
-  const accessWindowMs = EARLY_ACCESS_MINUTES * 60 * 1000;
+    const days = Math.floor(totalMinutes / (60 * 24));
+    const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+    const minutes = totalMinutes % 60;
 
-  if (test.status === "scheduled") {
     return {
       status: "scheduled",
+      canJoin: false,
       countdown: `Starts in ${days}d ${hours}h ${minutes}m`,
-      canJoin:
-        now >= scheduledTime &&
-        now <= new Date(scheduledTime.getTime() + accessWindowMs),
+      message: `Starts in ${days}d ${hours}h ${minutes}m`,
     };
   }
 
   return {
     status: "scheduled",
     canJoin: false,
+    message: "Test scheduled",
   };
 }
 

@@ -228,7 +228,7 @@ export default function MockTestPage() {
                           <ChevronRight className="h-5 w-5" />
                         </span>
                       ) : (
-                        testStatus.countdown || "Test Not Available"
+                        testStatus.countdown || testStatus.message
                       )}
                     </button>
                   </div>

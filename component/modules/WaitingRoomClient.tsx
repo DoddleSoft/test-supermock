@@ -10,7 +10,9 @@ import {
   CheckCircle,
   Clock,
   ChevronRight,
+  Lock,
 } from "lucide-react";
+import { createClient } from "@/utils/supabase/client";
 
 interface WaitingRoomClientProps {
   attemptId: string;
@@ -24,6 +26,11 @@ interface WaitingRoomClientProps {
   }>;
 }
 
+interface ModuleStatus {
+  module_id: string;
+  status: "not_started" | "in_progress" | "completed";
+}
+
 export default function WaitingRoomClient({
   attemptId,
   centerSlug,
@@ -31,15 +38,59 @@ export default function WaitingRoomClient({
 }: WaitingRoomClientProps) {
   const router = useRouter();
   const [isReady, setIsReady] = useState(false);
+  const [moduleStatuses, setModuleStatuses] = useState<Record<string, string>>(
+    {},
+  );
+  const [isLoading, setIsLoading] = useState(true);
 
+  // Fetch module statuses from database
   useEffect(() => {
+    const fetchModuleStatuses = async () => {
+      try {
+        const supabase = createClient();
+
+        // Fetch all attempt_modules for this attempt
+        const { data, error } = await supabase
+          .from("attempt_modules")
+          .select("module_id, status")
+          .eq("attempt_id", attemptId);
+
+        if (error) {
+          console.error("[WaitingRoom] Error fetching module statuses:", {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+          });
+          // Continue anyway - show all modules as available if fetch fails
+          setIsLoading(false);
+          return;
+        }
+
+        // Build status map
+        const statusMap: Record<string, string> = {};
+        data?.forEach((item: ModuleStatus) => {
+          statusMap[item.module_id] = item.status;
+        });
+
+        console.log("[WaitingRoom] Module statuses:", statusMap);
+        setModuleStatuses(statusMap);
+      } catch (error) {
+        console.error("[WaitingRoom] Failed to load module statuses:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchModuleStatuses();
+
     // Slight delay for smooth transition
     const timer = setTimeout(() => {
       setIsReady(true);
     }, 300);
 
     return () => clearTimeout(timer);
-  }, []);
+  }, [attemptId]);
 
   const getModuleIcon = (type: string) => {
     switch (type) {
@@ -71,12 +122,21 @@ export default function WaitingRoomClient({
     }
   };
 
-  const handleStartModule = (moduleId: string, moduleType: string) => {
+  const handleStartModule = (
+    moduleId: string,
+    moduleType: string,
+    status?: string,
+  ) => {
+    // Don't allow navigation to completed modules
+    if (status === "completed") {
+      return;
+    }
+
     // Navigate to module-specific route
     router.push(`/mock-test/${centerSlug}/${attemptId}/${moduleType}`);
   };
 
-  if (!isReady) {
+  if (!isReady || isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center p-6">
         <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
@@ -110,76 +170,140 @@ export default function WaitingRoomClient({
 
         {/* Module Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {modules.map((module) => (
-            <button
-              key={module.id}
-              onClick={() => handleStartModule(module.id, module.module_type)}
-              className={`group relative overflow-hidden rounded-xl border-2 border-gray-200 bg-white p-6 text-left transition-all duration-300 hover:shadow-xl hover:border-transparent hover:-translate-y-1`}
-            >
-              {/* Background Gradient on Hover */}
-              <div
-                className={`absolute inset-0 bg-gradient-to-r ${getModuleColor(module.module_type)} opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
-              />
+          {modules.map((module) => {
+            const status = moduleStatuses[module.id];
+            const isCompleted = status === "completed";
+            const isInProgress = status === "in_progress";
 
-              {/* Content */}
-              <div className="relative z-10">
-                <div className="flex items-start justify-between mb-4">
+            return (
+              <button
+                key={module.id}
+                onClick={() =>
+                  handleStartModule(module.id, module.module_type, status)
+                }
+                disabled={isCompleted}
+                className={`group relative overflow-hidden rounded-xl border-2 bg-white p-6 text-left transition-all duration-300 ${
+                  isCompleted
+                    ? "border-gray-300 opacity-60 cursor-not-allowed"
+                    : "border-gray-200 hover:shadow-xl hover:border-transparent hover:-translate-y-1"
+                }`}
+              >
+                {/* Background Gradient on Hover (only if not completed) */}
+                {!isCompleted && (
                   <div
-                    className={`flex items-center justify-center w-12 h-12 rounded-lg bg-opacity-20 transition-colors ${
-                      module.module_type === "reading"
-                        ? "bg-green-500"
-                        : module.module_type === "listening"
-                          ? "bg-blue-500"
-                          : module.module_type === "writing"
-                            ? "bg-purple-500"
-                            : "bg-orange-500"
-                    } group-hover:bg-white/30`}
-                  >
-                    <span
-                      className={`transition-colors ${
+                    className={`absolute inset-0 bg-gradient-to-r ${getModuleColor(module.module_type)} opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
+                  />
+                )}
+
+                {/* Completed Badge */}
+                {isCompleted && (
+                  <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-semibold">
+                    <CheckCircle className="w-3 h-3" />
+                    Completed
+                  </div>
+                )}
+
+                {/* In Progress Badge */}
+                {isInProgress && !isCompleted && (
+                  <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-semibold">
+                    <Clock className="w-3 h-3" />
+                    In Progress
+                  </div>
+                )}
+
+                {/* Content */}
+                <div className="relative z-10">
+                  <div className="flex items-start justify-between mb-4">
+                    <div
+                      className={`flex items-center justify-center w-12 h-12 rounded-lg bg-opacity-20 transition-colors ${
                         module.module_type === "reading"
-                          ? "text-green-700 group-hover:text-white"
+                          ? "bg-green-500"
                           : module.module_type === "listening"
-                            ? "text-blue-700 group-hover:text-white"
+                            ? "bg-blue-500"
                             : module.module_type === "writing"
-                              ? "text-purple-700 group-hover:text-white"
-                              : "text-orange-700 group-hover:text-white"
+                              ? "bg-purple-500"
+                              : "bg-orange-500"
+                      } ${isCompleted ? "opacity-50" : "group-hover:bg-white/30"}`}
+                    >
+                      <span
+                        className={`transition-colors ${
+                          isCompleted
+                            ? "text-gray-500"
+                            : module.module_type === "reading"
+                              ? "text-green-700 group-hover:text-white"
+                              : module.module_type === "listening"
+                                ? "text-blue-700 group-hover:text-white"
+                                : module.module_type === "writing"
+                                  ? "text-purple-700 group-hover:text-white"
+                                  : "text-orange-700 group-hover:text-white"
+                        }`}
+                      >
+                        {isCompleted ? (
+                          <Lock className="h-6 w-6" />
+                        ) : (
+                          getModuleIcon(module.module_type)
+                        )}
+                      </span>
+                    </div>
+                    {!isCompleted && (
+                      <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-white transition-colors" />
+                    )}
+                  </div>
+
+                  <h3
+                    className={`text-xl font-bold mb-2 transition-colors ${
+                      isCompleted
+                        ? "text-gray-500"
+                        : "text-gray-900 group-hover:text-white"
+                    }`}
+                  >
+                    {module.module_type.charAt(0).toUpperCase() +
+                      module.module_type.slice(1)}{" "}
+                    Test
+                  </h3>
+
+                  <div className="flex items-center gap-3 text-sm">
+                    <span
+                      className={`flex items-center gap-1 transition-colors ${
+                        isCompleted
+                          ? "text-gray-400"
+                          : "text-gray-600 group-hover:text-white/90"
                       }`}
                     >
-                      {getModuleIcon(module.module_type)}
+                      <Clock className="w-4 h-4" />
+                      60 min
+                    </span>
+                    <span
+                      className={`transition-colors ${
+                        isCompleted
+                          ? "text-gray-300"
+                          : "text-gray-400 group-hover:text-white/70"
+                      }`}
+                    >
+                      •
+                    </span>
+                    <span
+                      className={`capitalize transition-colors ${
+                        isCompleted
+                          ? "text-gray-400"
+                          : "text-gray-600 group-hover:text-white/90"
+                      }`}
+                    >
+                      {module.module_type}
                     </span>
                   </div>
-                  <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-white transition-colors" />
                 </div>
-
-                <h3 className="text-xl font-bold text-gray-900 group-hover:text-white mb-2 transition-colors">
-                  {module.module_type.charAt(0).toUpperCase() +
-                    module.module_type.slice(1)}{" "}
-                  Test
-                </h3>
-
-                <div className="flex items-center gap-3 text-sm">
-                  <span className="flex items-center gap-1 text-gray-600 group-hover:text-white/90 transition-colors">
-                    <Clock className="w-4 h-4" />
-                    60 min
-                  </span>
-                  <span className="text-gray-400 group-hover:text-white/70 transition-colors">
-                    •
-                  </span>
-                  <span className="text-gray-600 group-hover:text-white/90 transition-colors capitalize">
-                    {module.module_type}
-                  </span>
-                </div>
-              </div>
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </div>
 
         {/* Footer Note */}
         <div className="mt-8 p-4 bg-blue-50 rounded-lg border border-blue-200">
           <p className="text-sm text-blue-800">
             <strong>Note:</strong> Once you start a module, the timer will begin
-            automatically. Make sure you're ready before clicking.
+            automatically. Completed modules are locked and cannot be
+            re-attempted.
           </p>
         </div>
       </div>

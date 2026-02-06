@@ -2,8 +2,10 @@ import { notFound } from "next/navigation";
 import { ExamProvider } from "@/context/ExamContext";
 import { loadExamData } from "@/app/actions/exam";
 import { validateScheduledTestAccess } from "@/utils/validateTestAccess";
+import { validateModuleAccess } from "@/utils/validateModuleAccess";
 import TestExpiredScreen from "@/component/exam/TestExpiredScreen";
 import ListeningTestClient from "./ListeningTestClient";
+import { createClient } from "@/utils/supabase/server";
 
 interface ListeningPageProps {
   params: Promise<{ slug: string; id: string }>;
@@ -21,6 +23,34 @@ export default async function ListeningPage({ params }: ListeningPageProps) {
         message={validation.error}
         testTitle={validation.scheduledTest?.title}
         endedAt={validation.scheduledTest?.ended_at}
+        centerSlug={slug}
+      />
+    );
+  }
+
+  // CRITICAL SECURITY CHECK: Validate module-specific access
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user?.email) {
+    return (
+      <TestExpiredScreen
+        message="Authentication required to access this module"
+        centerSlug={slug}
+      />
+    );
+  }
+
+  const moduleAccess = await validateModuleAccess(id, "listening", user.email);
+
+  if (!moduleAccess.allowed) {
+    return (
+      <TestExpiredScreen
+        message={
+          moduleAccess.error || "You cannot access this module at this time"
+        }
         centerSlug={slug}
       />
     );
