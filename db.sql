@@ -334,7 +334,6 @@ duration_minutes on scheduled_tests for EACH row
 execute FUNCTION handle_test_end_time ();
 
 
-
 create table public.question_answers (
   id uuid not null default gen_random_uuid (),
   sub_section_id uuid null,
