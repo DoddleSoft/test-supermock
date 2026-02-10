@@ -21,90 +21,67 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
     return notFound();
   }
 
-  // Get student profile
-  const { data: profile, error: profileError } = await supabase
-    .from("student_profiles")
-    .select("*")
-    .eq("email", user.email)
-    .single();
+  // Call RPC to get student test scores with module breakdown
+  const { data: scoresData, error: scoresError } = await supabase.rpc(
+    "get_student_test_scores",
+    {
+      p_student_email: user.email!,
+    },
+  );
 
-  if (profileError || !profile) {
+  if (scoresError) {
+    console.error("Error fetching test scores:", scoresError);
     return notFound();
   }
 
-  // Get all mock attempts for this student
-  const { data: attempts, error: attemptsError } = await supabase
-    .from("mock_attempts")
-    .select(
-      `
-      id,
-      overall_band_score,
-      status,
-      started_at,
-      completed_at,
-      scheduled_test_id,
-      scheduled_tests(title)
-    `,
-    )
-    .eq("student_id", profile.student_id)
-    .order("started_at", { ascending: false })
-    .limit(10);
-
-  // Get the most recent completed attempt with module scores
-  const { data: latestAttempt, error: latestError } = await supabase
-    .from("mock_attempts")
-    .select(
-      `
-      id,
-      overall_band_score,
-      completed_at,
-      scheduled_test_id,
-      scheduled_tests(title)
-    `,
-    )
-    .eq("student_id", profile.student_id)
-    .eq("status", "completed")
-    .order("completed_at", { ascending: false })
-    .limit(1)
-    .single();
-
-  let moduleScores = {
-    listening: 0,
-    reading: 0,
-    writing: 0,
-    speaking: 0,
+  const result = scoresData as {
+    success: boolean;
+    error?: string;
+    student_id?: string;
+    tests?: Array<{
+      attempt_id: string;
+      test_number: number;
+      test_title: string;
+      overall_score: number;
+      completed_at: string;
+      started_at: string;
+      modules: {
+        listening: number;
+        reading: number;
+        writing: number;
+        speaking: number;
+      };
+    }>;
   };
 
-  if (latestAttempt) {
-    // Get module scores for the latest attempt
-    const { data: modules } = await supabase
-      .from("attempt_modules")
-      .select("band_score, modules(module_type)")
-      .eq("attempt_id", latestAttempt.id)
-      .eq("status", "completed");
-
-    if (modules) {
-      modules.forEach((module: any) => {
-        const moduleType = module.modules?.module_type;
-        if (moduleType && module.band_score) {
-          moduleScores[moduleType as keyof typeof moduleScores] =
-            module.band_score;
-        }
-      });
-    }
+  if (!result.success || !result.tests) {
+    return notFound();
   }
 
-  // Prepare chart data
-  const chartData =
-    attempts?.map((attempt, index) => ({
-      label: `T${index + 1}`,
-      score: attempt.overall_band_score || 0,
-      highlight:
-        attempt.status === "completed" &&
-        attempt.overall_band_score &&
-        attempt.overall_band_score >= 7,
-    })) || [];
+  const tests = result.tests;
+  const latestTest = tests[0];
 
+  // Prepare module scores for latest test
+  const moduleScores = latestTest
+    ? latestTest.modules
+    : {
+        listening: 0,
+        reading: 0,
+        writing: 0,
+        speaking: 0,
+      };
+
+  // Prepare chart data - reverse to show oldest to newest
+  const chartData = tests.reverse().map((test) => ({
+    label: `T${test.test_number}`,
+    testTitle: test.test_title,
+    listening: test.modules.listening || 0,
+    reading: test.modules.reading || 0,
+    writing: test.modules.writing || 0,
+    overall: test.overall_score || 0,
+  }));
+
+  const minScore = 5;
   const maxScore = 9;
 
   const formatDate = (dateString: string | null) => {
@@ -121,23 +98,19 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
   return (
     <div className="min-h-screen bg-gray-50 pt-10">
       {/* Navbar */}
-      <Navbar />
+      <Navbar hideInstructions={true} disableProfileLink={true} />
 
       {/* Main Content */}
       <div className="pt-24 pb-12 px-4 md:px-8">
         {/* Main Content Area */}
         <div className="lg:col-span-9 max-w-7xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-            {/* Overall Score Card Section */}
             <div className="lg:col-span-5">
-              {latestAttempt ? (
+              {latestTest ? (
                 <OverallScoreCard
-                  overallScore={latestAttempt.overall_band_score || 0}
-                  testDate={formatDate(latestAttempt.completed_at)}
-                  testName={
-                    (latestAttempt as any).scheduled_tests?.title ||
-                    "IELTS MOCK TEST"
-                  }
+                  overallScore={latestTest.overall_score || 0}
+                  testDate={formatDate(latestTest.completed_at)}
+                  testName={latestTest.test_title || "IELTS MOCK TEST"}
                   listening={moduleScores.listening}
                   reading={moduleScores.reading}
                   writing={moduleScores.writing}
@@ -155,49 +128,116 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
             {/* Chart Section */}
             <div className="lg:col-span-7">
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
-                <h2 className="text-lg font-semibold text-gray-800 mb-8">
+                <h2 className="text-lg font-semibold text-gray-800 mb-4">
                   Scores for the last {chartData.length} tests
                 </h2>
 
+                {/* Legend */}
+                <div className="flex items-center justify-end gap-4 mb-6">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-blue-500 rounded"></div>
+                    <span className="text-xs text-gray-600">Listening</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-green-500 rounded"></div>
+                    <span className="text-xs text-gray-600">Reading</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-purple-500 rounded"></div>
+                    <span className="text-xs text-gray-600">Writing</span>
+                  </div>
+                </div>
+
                 {chartData.length > 0 ? (
                   <div className="relative">
-                    {/* Y-axis labels */}
+                    {/* Y-axis labels (5.0 to 9.0 with 0.5 increments) */}
                     <div className="absolute left-0 top-0 bottom-8 flex flex-col justify-between text-xs text-gray-400 pr-4">
-                      <span>9</span>
-                      <span>6</span>
-                      <span>3</span>
-                      <span>0</span>
+                      <span>9.0</span>
+                      <span>8.5</span>
+                      <span>8.0</span>
+                      <span>7.5</span>
+                      <span>7.0</span>
+                      <span>6.5</span>
+                      <span>6.0</span>
+                      <span>5.5</span>
+                      <span>5.0</span>
                     </div>
 
                     {/* Chart bars */}
-                    <div className="ml-8 flex items-end justify-between gap-1 h-64 border-b border-gray-200">
-                      {chartData.map((item, index) => {
-                        const heightPercentage = (item.score / maxScore) * 100;
+                    <div className="ml-12 flex items-end justify-start gap-6 h-80 border-b border-gray-200 overflow-x-auto pb-2">
+                      {chartData.map((test, testIndex) => {
+                        // Calculate height percentage based on 5-9 scale
+                        const getHeight = (score: number) => {
+                          if (score < minScore) return 0;
+                          if (score > maxScore) score = maxScore;
+                          return (
+                            ((score - minScore) / (maxScore - minScore)) * 100
+                          );
+                        };
+
                         return (
                           <div
-                            key={index}
-                            className="flex-1 flex flex-col items-center justify-end"
+                            key={testIndex}
+                            className="flex items-end gap-1.5 min-w-[60px] h-full"
+                            title={test.testTitle}
                           >
-                            {/* Bar */}
-                            <div
-                              className={`w-full rounded-t transition-all ${
-                                item.highlight ? "bg-red-500" : "bg-red-200"
-                              }`}
-                              style={{ height: `${heightPercentage}%` }}
-                            />
+                            {/* Listening Bar */}
+                            <div className="flex-1 h-full flex flex-col items-center justify-end group relative">
+                              <div
+                                className="w-full bg-blue-500 rounded-t transition-all hover:bg-blue-600"
+                                style={{
+                                  height: `${getHeight(test.listening)}%`,
+                                  minHeight: "3px",
+                                }}
+                              />
+                              {/* Tooltip */}
+                              <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+                                L: {test.listening.toFixed(1)}
+                              </div>
+                            </div>
+
+                            {/* Reading Bar */}
+                            <div className="flex-1 h-full flex flex-col items-center justify-end group relative">
+                              <div
+                                className="w-full bg-green-500 rounded-t transition-all hover:bg-green-600"
+                                style={{
+                                  height: `${getHeight(test.reading)}%`,
+                                  minHeight: "3px",
+                                }}
+                              />
+                              {/* Tooltip */}
+                              <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+                                R: {test.reading.toFixed(1)}
+                              </div>
+                            </div>
+
+                            {/* Writing Bar */}
+                            <div className="flex-1 h-full flex flex-col items-center justify-end group relative">
+                              <div
+                                className="w-full bg-purple-500 rounded-t transition-all hover:bg-purple-600"
+                                style={{
+                                  height: `${getHeight(test.writing)}%`,
+                                  minHeight: "3px",
+                                }}
+                              />
+                              {/* Tooltip */}
+                              <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+                                W: {test.writing.toFixed(1)}
+                              </div>
+                            </div>
                           </div>
                         );
                       })}
                     </div>
 
                     {/* X-axis labels */}
-                    <div className="ml-8 flex justify-between mt-2">
-                      {chartData.map((item, index) => (
+                    <div className="ml-12 flex justify-start gap-6 mt-2">
+                      {chartData.map((test, index) => (
                         <div
                           key={index}
-                          className="flex-1 text-center text-xs text-gray-400"
+                          className="min-w-[60px] text-center text-xs text-gray-500 font-medium"
                         >
-                          {item.label}
+                          {test.label}
                         </div>
                       ))}
                     </div>
@@ -205,14 +245,6 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
                 ) : (
                   <div className="text-center py-12 text-gray-500">
                     No test history available
-                  </div>
-                )}
-
-                {/* Red dot indicator */}
-                {chartData.length > 0 && (
-                  <div className="flex items-center justify-end gap-2 mt-4">
-                    <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                    <span className="text-xs text-gray-500">Score 7.0+</span>
                   </div>
                 )}
               </div>

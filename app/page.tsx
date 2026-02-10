@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader } from "@/component/ui/loader";
+import { authService } from "@/helpers/auth";
 
 export default function Home() {
   const router = useRouter();
@@ -10,9 +11,31 @@ export default function Home() {
   const reason = searchParams.get("reason");
 
   useEffect(() => {
-    if (!reason) {
-      router.push("/auth/login");
-    }
+    const handleRedirect = async () => {
+      // If there's an error reason, show error page
+      if (reason) {
+        return;
+      }
+
+      // Check if user is authenticated and get their center
+      const access = await authService.getStudentAccess();
+
+      if (!access.success || !access.allowed) {
+        // Not authenticated or no access, redirect to login
+        router.push("/auth/login");
+        return;
+      }
+
+      // User is authenticated and has center access
+      if (access.centerSlug) {
+        router.push(`/mock-test/${access.centerSlug}`);
+      } else {
+        // No center assigned
+        router.push("/?reason=no-center");
+      }
+    };
+
+    handleRedirect();
   }, [router, reason]);
 
   if (!reason) {

@@ -20,8 +20,7 @@ export default function OverallScoreCard({
   speaking,
 }: OverallScoreCardProps) {
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 max-w-sm">
-      {/* Overall Score Header */}
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 max-w-sm">
       <div className="text-center mb-8">
         <h2 className="text-3xl font-light text-gray-400 mb-4">
           Overall score

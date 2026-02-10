@@ -58,7 +58,6 @@ export async function manuallyGradeModule(input: ManualGradeInput): Promise<{
       return { success: false, error: updateError.message };
     }
 
-    // Update overall score for the attempt
     const attemptId = (moduleData as any).attempt_id;
     if (attemptId) {
       await updateOverallAttemptScore(attemptId);
@@ -118,7 +117,7 @@ async function updateOverallAttemptScore(attemptId: string): Promise<void> {
       })
       .eq("id", attemptId);
   } catch (error) {
-    console.error("Error updating overall score:", error);
+    console.error("Error updating score:", error);
   }
 }
 

@@ -9,7 +9,15 @@ import { useAuth } from "@/context/AuthContext";
 import { authService } from "@/helpers/auth";
 import { toast } from "sonner";
 
-export default function Navbar() {
+interface NavbarProps {
+  hideInstructions?: boolean;
+  disableProfileLink?: boolean;
+}
+
+export default function Navbar({ 
+  hideInstructions = false, 
+  disableProfileLink = false 
+}: NavbarProps) {
   const router = useRouter();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -113,33 +121,50 @@ export default function Navbar() {
             <p className="text-sm text-gray-700 font-semibold">Test Portal</p>
           </div>
 
-          <a
-            href="#instructions"
-            className="text-md font-semibold cursor-pointer bg-gradient-to-r from-red-400 to-red-700 bg-clip-text text-transparent hover:underline"
-          >
-            Instructions
-          </a>
+          {!hideInstructions && (
+            <a
+              href="#instructions"
+              className="text-md font-semibold cursor-pointer bg-gradient-to-r from-red-400 to-red-700 bg-clip-text text-transparent hover:underline"
+            >
+              Instructions
+            </a>
+          )}
 
           {/* --- CTA & Mobile Toggle --- */}
           <div className="flex items-center gap-3 md:gap-4">
             <div className="flex gap-4 justify-end">
               {/* CENTER: Center Name */}
 
-              <Link
-                href={`/mock-test/${centerSlug}/profile`}
-                className="flex items-center gap-3 pr-2 border-r border-red-400 border-r-2 hover:bg-red-50 cursor-pointer rounded-lg transition-colors px-3 py-2 group"
-              >
-                <div className="text-right">
-                  <p className="text-sm font-medium text-slate-900 group-hover:text-red-600 transition-colors">
-                    {userProfile?.full_name ||
-                      user?.email?.split("@")[0] ||
-                      "User"}
-                  </p>
-                  <p className="text-[12px] text-slate-500">
-                    {user?.email || "N/A"}
-                  </p>
+              {disableProfileLink ? (
+                <div className="flex items-center gap-3 pr-2 border-r border-red-400 border-r-2 rounded-lg px-3 py-2">
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-slate-900">
+                      {userProfile?.full_name ||
+                        user?.email?.split("@")[0] ||
+                        "User"}
+                    </p>
+                    <p className="text-[12px] text-slate-500">
+                      {user?.email || "N/A"}
+                    </p>
+                  </div>
                 </div>
-              </Link>
+              ) : (
+                <Link
+                  href={`/mock-test/${centerSlug}/profile`}
+                  className="flex items-center gap-3 pr-2 border-r border-red-400 border-r-2 hover:bg-red-50 cursor-pointer rounded-lg transition-colors px-3 py-2 group"
+                >
+                  <div className="text-right">
+                    <p className="text-sm font-medium text-slate-900 group-hover:text-red-600 transition-colors">
+                      {userProfile?.full_name ||
+                        user?.email?.split("@")[0] ||
+                        "User"}
+                    </p>
+                    <p className="text-[12px] text-slate-500">
+                      {user?.email || "N/A"}
+                    </p>
+                  </div>
+                </Link>
+              )}
             </div>
 
             {/* Mobile Toggle Button */}
@@ -152,36 +177,6 @@ export default function Navbar() {
             </button>
           </div>
         </div>
-
-        {/* --- Mobile Menu --- */}
-        {isMobileMenuOpen && (
-          <div className="mt-2 p-3 rounded-2xl bg-white/95 backdrop-blur-xl border border-white/20 shadow-xl md:hidden flex flex-col gap-2 animate-in slide-in-from-top-2 fade-in duration-200">
-            <Link
-              href="/#features"
-              onClick={(e) => handleSmoothScroll(e, "features")}
-              className="text-slate-600 font-medium px-4 py-3 hover:bg-slate-50 rounded-xl transition-colors"
-            >
-              Features
-            </Link>
-            <Link
-              href="/#pricing"
-              onClick={(e) => handleSmoothScroll(e, "pricing")}
-              className="text-slate-600 font-medium px-4 py-3 hover:bg-slate-50 rounded-xl transition-colors"
-            >
-              Pricing
-            </Link>
-            <div className="h-px bg-slate-100 my-1 mx-2" /> {/* Divider */}
-            <button
-              onClick={() => {
-                handleStartTest();
-                setIsMobileMenuOpen(false);
-              }}
-              className="w-full text-center px-5 py-3 text-sm font-bold text-white bg-red-600 rounded-xl active:scale-95 transition-transform hover:bg-red-700"
-            >
-              Start Test
-            </button>
-          </div>
-        )}
       </div>
     </nav>
   );
