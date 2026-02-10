@@ -1,541 +1,59 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/utils/supabase/server";
 
+// Import grading engine modules
+import {
+  GRADING_VERSION,
+  GradingRequest,
+  GradingResult,
+  QuestionAnswer,
+  SubmittedAnswer,
+  AnswerUpdate,
+  validateAnswer,
+  calculateBandScore,
+  getModuleSubSectionIds,
+  computeFinalTimeSpent,
+  errorResponse,
+} from "@/helpers/grading";
+
 // ============================================================
-// GRADING ENGINE v2.0.0
+// GRADING ENGINE v2.1.0
 // Industry-grade IELTS grading API
 // Atomic, idempotent, secure, cheat-resistant
 // ============================================================
-
-const GRADING_VERSION = "2.0.0";
-
-// ============================================================
-// TYPE DEFINITIONS
-// ============================================================
-
-interface GradingRequest {
-  attemptModuleId: string;
-  answers?: SubmittedAnswer[];
-  autoSubmit?: boolean;
-  timeSpentSeconds?: number;
-  timeRemainingSeconds?: number;
-}
-
-interface SubmittedAnswer {
-  reference_id: string;
-  question_ref: string;
-  student_response: string;
-}
-
-interface QuestionAnswer {
-  id: string;
-  sub_section_id: string;
-  question_ref: string;
-  correct_answers: any;
-  options: any;
-  explanation: string | null;
-  marks: number;
-}
-
-interface GradingResult {
-  success: boolean;
-  totalScore?: number;
-  maxScore?: number;
-  bandScore?: number | null;
-  correctCount?: number;
-  incorrectCount?: number;
-  unansweredCount?: number;
-  percentage?: number;
-  nextModuleType?: string | null;
-  attemptCompleted?: boolean;
-  alreadyGraded?: boolean;
-  error?: string;
-  gradingVersion?: string;
-}
-
-// ============================================================
-// NUMBER ↔ WORD NORMALIZATION MAP
+//
+// PERFORMANCE & RELIABILITY OPTIMIZATIONS:
+//
+// 1. CONNECTION POOLING OPTIMIZATION
+//    - Database connections freed immediately after RPC call
+//    - Node.js performs all computation (Levenshtein, normalization) in-memory
+//    - DB not blocked during CPU-intensive grading calculations
+//
+// 2. NETWORK LATENCY REDUCTION
+//    - OLD: ~50+ round trips (answer upserts + updates + module update + flow)
+//    - NEW: Exactly 3 RPC calls total (upsert answers, commit grading, flow status)
+//    - Answer upsert: 1 call (was N/50 batches)
+//    - Grading commit: 1 atomic call (was 40+ individual updates + module update)
+//    - Flow control: 1 call (was 2-3 queries + potential update)
+//
+// 3. DATA INTEGRITY (ACID Transactions)
+//    - All grading operations wrapped in Postgres transactions
+//    - If server crashes mid-grading: ENTIRE operation rolls back
+//    - No more "completed status with half-graded answers"
+//    - Optimistic locking prevents concurrent grading conflicts
+//    - Guarantees: Atomicity, Consistency, Isolation, Durability
+//
+// 4. FETCH-ONCE, PROCESS IN-MEMORY, SAVE-ONCE PATTERN
+//    - Fetch all questions & student answers once
+//    - Grade completely in Node.js memory (fast JS engine)
+//    - Commit all results in single atomic transaction
+//    - Database only handles data storage, not computation
+//
 // ============================================================
 
-const NUMBER_WORD_TO_DIGIT: Record<string, string> = {
-  zero: "0",
-  one: "1",
-  two: "2",
-  three: "3",
-  four: "4",
-  five: "5",
-  six: "6",
-  seven: "7",
-  eight: "8",
-  nine: "9",
-  ten: "10",
-  eleven: "11",
-  twelve: "12",
-  thirteen: "13",
-  fourteen: "14",
-  fifteen: "15",
-  sixteen: "16",
-  seventeen: "17",
-  eighteen: "18",
-  nineteen: "19",
-  twenty: "20",
-  thirty: "30",
-  forty: "40",
-  fifty: "50",
-  sixty: "60",
-  seventy: "70",
-  eighty: "80",
-  ninety: "90",
-  hundred: "100",
-  thousand: "1000",
-  first: "1st",
-  second: "2nd",
-  third: "3rd",
-  fourth: "4th",
-  fifth: "5th",
-  sixth: "6th",
-  seventh: "7th",
-  eighth: "8th",
-  ninth: "9th",
-  tenth: "10th",
-};
-
-// Build reverse map: digit → word
-const DIGIT_TO_NUMBER_WORD: Record<string, string> = {};
-for (const [word, digit] of Object.entries(NUMBER_WORD_TO_DIGIT)) {
-  DIGIT_TO_NUMBER_WORD[digit] = word;
-}
-
-// Compound numbers like "twenty one" → "21", "twenty-one" → "21"
-const COMPOUND_NUMBER_WORDS: Record<string, string> = {};
-const TENS = [
-  "twenty",
-  "thirty",
-  "forty",
-  "fifty",
-  "sixty",
-  "seventy",
-  "eighty",
-  "ninety",
-];
-const ONES = [
-  "one",
-  "two",
-  "three",
-  "four",
-  "five",
-  "six",
-  "seven",
-  "eight",
-  "nine",
-];
-for (const ten of TENS) {
-  const tenVal = parseInt(NUMBER_WORD_TO_DIGIT[ten]);
-  for (const one of ONES) {
-    const oneVal = parseInt(NUMBER_WORD_TO_DIGIT[one]);
-    const total = (tenVal + oneVal).toString();
-    COMPOUND_NUMBER_WORDS[`${ten} ${one}`] = total;
-    COMPOUND_NUMBER_WORDS[`${ten}-${one}`] = total;
-    COMPOUND_NUMBER_WORDS[`${ten}${one}`] = total;
-  }
-}
-
-// ============================================================
-// TEXT NORMALIZATION ENGINE
-// ============================================================
-
-/**
- * Core text normalization for IELTS answer comparison.
- * 1. Lowercase
- * 2. Trim + collapse whitespace
- * 3. Normalize hyphens to spaces
- * 4. Remove punctuation (except internal apostrophes)
- * 5. Convert number words to digits
- * 6. Normalize common plurals
- */
-function normalizeText(text: string): string {
-  if (!text || typeof text !== "string") return "";
-
-  let result = text.toLowerCase().trim();
-
-  // Replace hyphens with spaces for uniform comparison
-  result = result.replace(/-/g, " ");
-
-  // Remove punctuation except apostrophes within words (e.g., don't, it's)
-  result = result.replace(/[^\w\s']/g, "");
-
-  // Collapse multiple spaces
-  result = result.replace(/\s+/g, " ").trim();
-
-  // Convert compound number words first (before single words)
-  for (const [compound, digit] of Object.entries(COMPOUND_NUMBER_WORDS)) {
-    const regex = new RegExp(`\\b${compound}\\b`, "gi");
-    result = result.replace(regex, digit);
-  }
-
-  // Convert single number words to digits
-  for (const [word, digit] of Object.entries(NUMBER_WORD_TO_DIGIT)) {
-    const regex = new RegExp(`\\b${word}\\b`, "gi");
-    result = result.replace(regex, digit);
-  }
-
-  // Final whitespace cleanup
-  result = result.replace(/\s+/g, " ").trim();
-
-  return result;
-}
-
-/**
- * Generate normalized variants for flexible matching.
- * Returns the base normalization plus singular/plural variants.
- */
-function getNormalizedVariants(text: string): string[] {
-  const base = normalizeText(text);
-  if (!base) return [];
-
-  const variants = new Set<string>();
-  variants.add(base);
-
-  // Singular/plural variants
-  if (base.endsWith("ies")) {
-    // 'ies' → 'y' (e.g., "countries" → "country")
-    variants.add(base.slice(0, -3) + "y");
-  } else if (base.endsWith("ves")) {
-    // 'ves' → 'f' (e.g., "knives" → "knife")
-    variants.add(base.slice(0, -3) + "f");
-    variants.add(base.slice(0, -3) + "fe");
-  } else if (base.endsWith("es")) {
-    // 'es' → '' (e.g., "boxes" → "box")
-    variants.add(base.slice(0, -2));
-  } else if (base.endsWith("s") && !base.endsWith("ss")) {
-    // 's' → '' (e.g., "cats" → "cat")
-    variants.add(base.slice(0, -1));
-  }
-
-  // Add with 's' if doesn't end with 's'
-  if (!base.endsWith("s")) {
-    variants.add(base + "s");
-  }
-
-  // Digit ↔ word variants for the entire base if it's a pure number/word
-  if (DIGIT_TO_NUMBER_WORD[base]) {
-    variants.add(DIGIT_TO_NUMBER_WORD[base]);
-  }
-  if (NUMBER_WORD_TO_DIGIT[base]) {
-    variants.add(NUMBER_WORD_TO_DIGIT[base]);
-  }
-
-  // Hyphen ↔ space variants (add the hyphenated form back)
-  if (base.includes(" ")) {
-    variants.add(base.replace(/ /g, "-"));
-  }
-
-  return Array.from(variants);
-}
-
-// ============================================================
-// LEVENSHTEIN DISTANCE (FUZZY MATCHING)
-// ============================================================
-
-/**
- * Calculate Levenshtein edit distance between two strings.
- * Optimized: early exit if distance already > 1.
- */
-function levenshteinDistance(a: string, b: string): number {
-  if (a === b) return 0;
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
-
-  // If length difference > 1, distance must be > 1
-  if (Math.abs(a.length - b.length) > 1) return 2;
-
-  const matrix: number[][] = [];
-
-  for (let i = 0; i <= a.length; i++) {
-    matrix[i] = [i];
-  }
-  for (let j = 0; j <= b.length; j++) {
-    matrix[0][j] = j;
-  }
-
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      matrix[i][j] = Math.min(
-        matrix[i - 1][j] + 1,
-        matrix[i][j - 1] + 1,
-        matrix[i - 1][j - 1] + cost,
-      );
-    }
-  }
-
-  return matrix[a.length][b.length];
-}
-
-// ============================================================
-// ANSWER MATCHING ENGINE
-// ============================================================
-
-/**
- * Flexible article handling: accept with/without "the", "a", "an"
- */
-function matchWithArticles(student: string, correct: string): boolean {
-  if (student === correct) return true;
-
-  const articles = ["the ", "a ", "an "];
-
-  // Student added an article
-  for (const article of articles) {
-    if (student === article + correct) return true;
-  }
-
-  // Correct answer has an article, student omitted it
-  for (const article of articles) {
-    if (correct === article + student) return true;
-  }
-
-  return false;
-}
-
-/**
- * Match a single student answer against a single correct answer string.
- * Uses normalization variants, article handling, and fuzzy matching.
- */
-function matchSingleAnswer(student: string, correct: string): boolean {
-  const studentVariants = getNormalizedVariants(student);
-  const correctVariants = getNormalizedVariants(correct);
-
-  // Exact match across all variant combinations
-  for (const sv of studentVariants) {
-    for (const cv of correctVariants) {
-      if (matchWithArticles(sv, cv)) return true;
-    }
-  }
-
-  // Fuzzy match: Levenshtein distance ≤ 1 on base normalized forms
-  // Only for answers with length ≥ 4 to avoid false positives on short words
-  const studentBase = normalizeText(student);
-  const correctBase = normalizeText(correct);
-
-  if (studentBase.length >= 4 && correctBase.length >= 4) {
-    if (levenshteinDistance(studentBase, correctBase) <= 1) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/**
- * Validate a student's response against correct answers from the database.
- * Supports: single string, array of strings, object with alternatives.
- */
-function validateAnswer(
-  studentResponse: string | string[],
-  correctAnswers: any,
-  marks: number = 1,
-): { isCorrect: boolean; marksAwarded: number } {
-  // Parse student response if JSON-encoded
-  let parsedResponse = studentResponse;
-  if (typeof studentResponse === "string") {
-    try {
-      const parsed = JSON.parse(studentResponse);
-      if (Array.isArray(parsed)) {
-        parsedResponse = parsed;
-      }
-    } catch {
-      // Not JSON, use as plain text
-    }
-  }
-
-  // --- Array response (e.g., multi-select) ---
-  if (Array.isArray(parsedResponse)) {
-    if (Array.isArray(correctAnswers)) {
-      const normalizedStudent = parsedResponse
-        .map((a) => normalizeText(String(a)))
-        .filter(Boolean)
-        .sort();
-      const normalizedCorrect = correctAnswers
-        .map((a: any) => normalizeText(String(a)))
-        .filter(Boolean)
-        .sort();
-
-      if (normalizedStudent.length !== normalizedCorrect.length) {
-        return { isCorrect: false, marksAwarded: 0 };
-      }
-
-      const allMatch = normalizedStudent.every((sv, i) =>
-        matchSingleAnswer(sv, normalizedCorrect[i]),
-      );
-
-      return { isCorrect: allMatch, marksAwarded: allMatch ? marks : 0 };
-    }
-    return { isCorrect: false, marksAwarded: 0 };
-  }
-
-  // --- String response ---
-  const responseStr =
-    typeof parsedResponse === "string"
-      ? parsedResponse
-      : String(parsedResponse);
-  const trimmed = responseStr.trim();
-  if (!trimmed) return { isCorrect: false, marksAwarded: 0 };
-
-  // Check against array of correct answers (accept any one)
-  if (Array.isArray(correctAnswers)) {
-    const isCorrect = correctAnswers.some((answer: any) =>
-      matchSingleAnswer(trimmed, String(answer)),
-    );
-    return { isCorrect, marksAwarded: isCorrect ? marks : 0 };
-  }
-
-  // Check against object with main answer + alternatives
-  if (typeof correctAnswers === "object" && correctAnswers !== null) {
-    const mainAnswer =
-      correctAnswers.answer || correctAnswers.value || correctAnswers.text;
-    const alternatives = correctAnswers.alternatives || [];
-
-    if (mainAnswer && matchSingleAnswer(trimmed, String(mainAnswer))) {
-      return { isCorrect: true, marksAwarded: marks };
-    }
-
-    if (Array.isArray(alternatives)) {
-      const isCorrect = alternatives.some((alt: any) =>
-        matchSingleAnswer(trimmed, String(alt)),
-      );
-      if (isCorrect) return { isCorrect: true, marksAwarded: marks };
-    }
-
-    return { isCorrect: false, marksAwarded: 0 };
-  }
-
-  // Check against simple string
-  const isCorrect = matchSingleAnswer(trimmed, String(correctAnswers));
-  return { isCorrect, marksAwarded: isCorrect ? marks : 0 };
-}
-
-// ============================================================
-// OFFICIAL IELTS BAND SCORE CONVERSION TABLES
-// ============================================================
-
-const IELTS_LISTENING_BANDS: Record<number, number> = {
-  40: 9.0,
-  39: 9.0,
-  38: 8.5,
-  37: 8.5,
-  36: 8.0,
-  35: 8.0,
-  34: 7.5,
-  33: 7.5,
-  32: 7.5,
-  31: 7.0,
-  30: 7.0,
-  29: 6.5,
-  28: 6.5,
-  27: 6.5,
-  26: 6.5,
-  25: 6.0,
-  24: 6.0,
-  23: 6.0,
-  22: 5.5,
-  21: 5.5,
-  20: 5.5,
-  19: 5.5,
-  18: 5.5,
-  17: 5.0,
-  16: 5.0,
-  15: 5.0,
-  14: 5.0,
-  13: 5.0,
-  12: 4.5,
-  11: 4.5,
-  10: 4.5,
-  9: 4.0,
-  8: 4.0,
-  7: 4.0,
-  6: 4.0,
-  5: 3.5,
-  4: 3.5,
-  3: 3.0,
-  2: 3.0,
-  1: 2.5,
-  0: 1.0,
-};
-
-const IELTS_READING_BANDS: Record<number, number> = {
-  40: 9.0,
-  39: 9.0,
-  38: 8.5,
-  37: 8.5,
-  36: 8.0,
-  35: 8.0,
-  34: 7.5,
-  33: 7.5,
-  32: 7.0,
-  31: 7.0,
-  30: 7.0,
-  29: 6.5,
-  28: 6.5,
-  27: 6.5,
-  26: 6.0,
-  25: 6.0,
-  24: 6.0,
-  23: 6.0,
-  22: 5.5,
-  21: 5.5,
-  20: 5.5,
-  19: 5.5,
-  18: 5.0,
-  17: 5.0,
-  16: 5.0,
-  15: 5.0,
-  14: 4.5,
-  13: 4.5,
-  12: 4.5,
-  11: 4.0,
-  10: 4.0,
-  9: 4.0,
-  8: 3.5,
-  7: 3.5,
-  6: 3.5,
-  5: 3.0,
-  4: 3.0,
-  3: 2.5,
-  2: 2.5,
-  1: 2.0,
-  0: 1.0,
-};
-
-/**
- * Convert raw score to IELTS band using official lookup tables.
- * Returns null for writing/speaking (manually graded).
- */
-function calculateBandScore(
-  rawScore: number,
-  moduleType: string,
-): number | null {
-  if (moduleType !== "reading" && moduleType !== "listening") return null;
-
-  const score = Math.max(0, Math.min(40, Math.floor(rawScore)));
-  const table =
-    moduleType === "listening" ? IELTS_LISTENING_BANDS : IELTS_READING_BANDS;
-
-  return table[score] ?? 1.0;
-}
-
-// ============================================================
-// MODULE ORDER & FLOW CONTROL
-// ============================================================
-
-const MODULE_ORDER = ["listening", "reading", "writing"] as const;
-
-function getNextModuleType(currentType: string): string | null {
-  const idx = MODULE_ORDER.indexOf(
-    currentType as (typeof MODULE_ORDER)[number],
-  );
-  if (idx === -1 || idx >= MODULE_ORDER.length - 1) return null;
-  return MODULE_ORDER[idx + 1];
-}
+// Note: All type definitions, constants, normalization logic, matching engine,
+// band score calculations, and helper utilities have been moved to @/helpers/grading
+// for better modularity and maintainability.
 
 // ============================================================
 // MAIN GRADING API HANDLER
@@ -638,20 +156,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // 4. IDEMPOTENCY — already graded? Return cached result
     // -------------------------------------------------------
     if (attemptModule.status === "completed") {
-      // Already graded — determine next module for navigation
-      const flowResult = await handleModuleFlowControl(
-        supabase,
-        attemptModule.attempt_id,
-        moduleType,
+      // Already graded — determine next module for navigation using RPC
+      const { data: flowResult, error: flowError } = await supabase.rpc(
+        "get_attempt_flow_status",
+        {
+          p_attempt_id: attemptModule.attempt_id,
+          p_current_module_type: moduleType,
+        },
       );
+
+      if (flowError) {
+        console.error("[Grading] Flow control RPC failed:", flowError);
+      }
 
       return NextResponse.json({
         success: true,
         alreadyGraded: true,
         totalScore: attemptModule.score_obtained ?? 0,
         bandScore: attemptModule.band_score ?? null,
-        nextModuleType: flowResult.nextModuleType,
-        attemptCompleted: flowResult.attemptCompleted,
+        nextModuleType: flowResult?.next_module_type ?? null,
+        attemptCompleted: flowResult?.attempt_completed ?? false,
         gradingVersion: GRADING_VERSION,
       } satisfies GradingResult);
     }
@@ -730,7 +254,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // -------------------------------------------------------
-    // 6. SAVE ANSWERS (upsert, idempotent via unique constraint)
+    // 6. SAVE ANSWERS (atomic RPC upsert - single round trip)
     // -------------------------------------------------------
     if (answers && answers.length > 0) {
       // Deduplicate: keep last occurrence per (reference_id, question_ref)
@@ -750,21 +274,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const answersToSave = Array.from(deduped.values())
         .filter((a) => a.reference_id && a.question_ref)
         .map((a) => ({
-          attempt_module_id: attemptModuleId,
           reference_id: a.reference_id,
           question_ref: a.question_ref,
           student_response: a.student_response,
         }));
 
       if (answersToSave.length > 0) {
-        const { error: upsertError } = await supabase
-          .from("student_answers")
-          .upsert(answersToSave, {
-            onConflict: "attempt_module_id,reference_id,question_ref",
-          });
+        // Single atomic RPC call - replaces N database calls
+        const { error: upsertError } = await supabase.rpc(
+          "upsert_student_answers",
+          {
+            p_attempt_module_id: attemptModuleId,
+            p_answers: answersToSave,
+          },
+        );
 
         if (upsertError) {
-          console.error("[Grading] Answer upsert failed:", upsertError);
+          console.error("[Grading] Answer upsert RPC failed:", upsertError);
           return errorResponse(
             `Failed to save answers: ${upsertError.message}`,
             500,
@@ -800,17 +326,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return errorResponse("Failed to complete writing module", 500);
       }
 
-      const flowResult = await handleModuleFlowControl(
-        supabase,
-        attemptModule.attempt_id,
-        moduleType,
+      // Use RPC for flow control
+      const { data: flowResult, error: flowError } = await supabase.rpc(
+        "get_attempt_flow_status",
+        {
+          p_attempt_id: attemptModule.attempt_id,
+          p_current_module_type: moduleType,
+        },
       );
+
+      if (flowError) {
+        console.error("[Grading] Flow control RPC failed:", flowError);
+      }
 
       return NextResponse.json({
         success: true,
         bandScore: null,
-        nextModuleType: flowResult.nextModuleType,
-        attemptCompleted: flowResult.attemptCompleted,
+        nextModuleType: flowResult?.next_module_type ?? null,
+        attemptCompleted: flowResult?.attempt_completed ?? false,
         gradingVersion: GRADING_VERSION,
       } satisfies GradingResult);
     }
@@ -948,32 +481,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // -------------------------------------------------------
-    // 10. STORE GRADING RESULTS (per-answer)
-    // -------------------------------------------------------
-    if (answerUpdates.length > 0) {
-      const BATCH_SIZE = 50;
-      for (let i = 0; i < answerUpdates.length; i += BATCH_SIZE) {
-        const batch = answerUpdates.slice(i, i + BATCH_SIZE);
-        const updatePromises = batch.map((upd) =>
-          supabase
-            .from("student_answers")
-            .update({
-              is_correct: upd.is_correct,
-              marks_awarded: upd.marks_awarded,
-            })
-            .eq("id", upd.id),
-        );
-        const results = await Promise.all(updatePromises);
-        for (const r of results) {
-          if (r.error) {
-            console.error("[Grading] Answer update error:", r.error);
-          }
-        }
-      }
-    }
-
-    // -------------------------------------------------------
-    // 11. CALCULATE BAND SCORE & UPDATE MODULE
+    // 10. CALCULATE BAND SCORE
     // -------------------------------------------------------
     const bandScore = calculateBandScore(totalScore, moduleType);
     const percentage =
@@ -987,36 +495,72 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       timeSpentSeconds,
     );
 
-    // Optimistic lock: only update if status hasn't changed concurrently
-    const { error: moduleUpdateError } = await supabase
-      .from("attempt_modules")
-      .update({
-        status: "completed",
-        completed_at: new Date().toISOString(),
-        score_obtained: totalScore,
-        band_score: bandScore,
-        time_spent_seconds: finalTimeSpent,
-        time_remaining_seconds: timeRemainingSeconds ?? 0,
-      })
-      .eq("id", attemptModuleId)
-      .eq("status", attemptModule.status); // Concurrency lock
+    // -------------------------------------------------------
+    // 11. ATOMIC GRADING COMMIT (single RPC - all or nothing)
+    // -------------------------------------------------------
+    // This replaces multiple DB calls with ONE atomic transaction:
+    // - Updates all answer results (40+ rows)
+    // - Updates module stats
+    // - Uses optimistic locking
+    // - Ensures data integrity (no partial updates)
+    const { data: commitResult, error: commitError } = await supabase.rpc(
+      "commit_grading_results",
+      {
+        p_attempt_module_id: attemptModuleId,
+        p_total_score: totalScore,
+        p_band_score: bandScore,
+        p_time_spent: finalTimeSpent,
+        p_time_remaining: timeRemainingSeconds ?? 0,
+        p_status: "completed",
+        p_answers: answerUpdates.map((upd) => ({
+          answer_id: upd.id,
+          is_correct: upd.is_correct,
+          marks_awarded: upd.marks_awarded,
+        })),
+        p_previous_status: attemptModule.status, // Optimistic lock
+      },
+    );
 
-    if (moduleUpdateError) {
-      console.error("[Grading] Module update failed:", moduleUpdateError);
+    if (commitError) {
+      console.error("[Grading] Atomic commit failed:", commitError);
+
+      // Handle specific concurrent modification gracefully
+      if (commitError.message?.includes("CONCURRENT_MODIFICATION")) {
+        return errorResponse(
+          "This module has already been graded or status changed",
+          409,
+        );
+      }
+
       return errorResponse(
-        `Failed to update module: ${moduleUpdateError.message}`,
+        `Failed to commit grading: ${commitError.message}`,
         500,
       );
     }
 
-    // -------------------------------------------------------
-    // 12. MODULE FLOW CONTROL
-    // -------------------------------------------------------
-    const flowResult = await handleModuleFlowControl(
-      supabase,
-      attemptModule.attempt_id,
-      moduleType,
+    console.log(
+      `[Grading] Atomic commit succeeded: ${commitResult?.answers_updated ?? 0} answers updated`,
     );
+
+    // -------------------------------------------------------
+    // 12. MODULE FLOW CONTROL (single RPC)
+    // -------------------------------------------------------
+    // Use RPC to determine next module and completion status atomically
+    const { data: flowResult, error: flowError } = await supabase.rpc(
+      "get_attempt_flow_status",
+      {
+        p_attempt_id: attemptModule.attempt_id,
+        p_current_module_type: moduleType,
+      },
+    );
+
+    if (flowError) {
+      console.error("[Grading] Flow control RPC failed:", flowError);
+      // Don't fail the entire request, use defaults
+    }
+
+    const nextModuleType = flowResult?.next_module_type ?? null;
+    const attemptCompleted = flowResult?.attempt_completed ?? false;
 
     // -------------------------------------------------------
     // 13. RETURN RESULT
@@ -1037,8 +581,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       incorrectCount,
       unansweredCount,
       percentage,
-      nextModuleType: flowResult.nextModuleType,
-      attemptCompleted: flowResult.attemptCompleted,
+      nextModuleType,
+      attemptCompleted,
       alreadyGraded: false,
       gradingVersion: GRADING_VERSION,
     } satisfies GradingResult);
@@ -1046,165 +590,4 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     console.error("[Grading] Unexpected error:", error);
     return errorResponse(error?.message || "Internal grading error", 500);
   }
-}
-
-// ============================================================
-// HELPER: Get all sub_section IDs for a module
-// ============================================================
-
-async function getModuleSubSectionIds(
-  supabase: any,
-  moduleId: string,
-): Promise<string[]> {
-  const { data: sections, error: sectionsError } = await supabase
-    .from("sections")
-    .select("id")
-    .eq("module_id", moduleId);
-
-  if (sectionsError || !sections || sections.length === 0) {
-    return [];
-  }
-
-  const sectionIds = sections.map((s: any) => s.id);
-
-  const { data: subSections, error: subError } = await supabase
-    .from("sub_sections")
-    .select("id")
-    .in("section_id", sectionIds);
-
-  if (subError || !subSections) {
-    return [];
-  }
-
-  return subSections.map((ss: any) => ss.id);
-}
-
-// ============================================================
-// HELPER: Compute final time spent
-// ============================================================
-
-function computeFinalTimeSpent(
-  startedAt: string | null,
-  previousTimeSpent: number | null,
-  clientTimeSpent?: number,
-): number {
-  if (clientTimeSpent !== undefined && clientTimeSpent > 0) {
-    return clientTimeSpent;
-  }
-
-  const prev = previousTimeSpent || 0;
-
-  if (startedAt) {
-    const startMs = new Date(startedAt).getTime();
-    const additionalSeconds = Math.max(
-      0,
-      Math.floor((Date.now() - startMs) / 1000),
-    );
-    return prev + additionalSeconds;
-  }
-
-  return prev;
-}
-
-// ============================================================
-// HELPER: Module Flow Control
-// ============================================================
-
-interface FlowResult {
-  nextModuleType: string | null;
-  attemptCompleted: boolean;
-}
-
-async function handleModuleFlowControl(
-  supabase: any,
-  attemptId: string,
-  currentModuleType: string,
-): Promise<FlowResult> {
-  try {
-    // Get all attempt modules for this attempt
-    const { data: allModules, error: modulesError } = await supabase
-      .from("attempt_modules")
-      .select(
-        "id, module_id, status, band_score, score_obtained, modules(module_type)",
-      )
-      .eq("attempt_id", attemptId);
-
-    if (modulesError || !allModules) {
-      return { nextModuleType: null, attemptCompleted: false };
-    }
-
-    const completedModules = allModules.filter(
-      (m: any) => m.status === "completed",
-    );
-
-    // All modules completed → lock attempt
-    if (completedModules.length === allModules.length) {
-      const validScores = completedModules
-        .filter((m: any) => m.band_score !== null && m.band_score !== undefined)
-        .map((m: any) => parseFloat(m.band_score));
-
-      let overallBandScore: number | null = null;
-      if (validScores.length > 0) {
-        const avg =
-          validScores.reduce((sum: number, s: number) => sum + s, 0) /
-          validScores.length;
-        overallBandScore = Math.round(avg * 2) / 2;
-      }
-
-      // Lock attempt — optimistic: only if still in_progress
-      await supabase
-        .from("mock_attempts")
-        .update({
-          status: "completed",
-          completed_at: new Date().toISOString(),
-          overall_band_score: overallBandScore,
-        })
-        .eq("id", attemptId)
-        .eq("status", "in_progress");
-
-      return { nextModuleType: null, attemptCompleted: true };
-    }
-
-    // Determine next module in sequence
-    const nextType = getNextModuleType(currentModuleType);
-    if (nextType) {
-      const nextModule = allModules.find(
-        (m: any) =>
-          (m as any).modules?.module_type === nextType &&
-          m.status !== "completed",
-      );
-      if (nextModule) {
-        return { nextModuleType: nextType, attemptCompleted: false };
-      }
-    }
-
-    // Fallback: find any non-completed module
-    const anyPending = allModules.find((m: any) => m.status !== "completed");
-    if (anyPending) {
-      return {
-        nextModuleType: (anyPending as any).modules?.module_type || null,
-        attemptCompleted: false,
-      };
-    }
-
-    return { nextModuleType: null, attemptCompleted: true };
-  } catch (error) {
-    console.error("[Grading] Flow control error:", error);
-    return { nextModuleType: null, attemptCompleted: false };
-  }
-}
-
-// ============================================================
-// HELPER: Standard error response
-// ============================================================
-
-function errorResponse(message: string, status: number): NextResponse {
-  return NextResponse.json(
-    {
-      success: false,
-      error: message,
-      gradingVersion: GRADING_VERSION,
-    },
-    { status },
-  );
 }

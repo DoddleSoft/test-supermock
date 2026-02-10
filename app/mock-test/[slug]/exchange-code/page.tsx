@@ -72,15 +72,56 @@ export default function JoinCenterPage() {
         return;
       }
 
-      // Store attempt info in sessionStorage for exam interface
-      sessionStorage.setItem("attemptId", result.attemptId!);
-      sessionStorage.setItem("paperId", result.paperId!);
+      // Validate RPC response structure
+      if (!result.attemptId || !result.paperId) {
+        console.error("[ExchangeCode] Invalid RPC response:", result);
+        setError("Server returned incomplete data. Please try again.");
+        return;
+      }
 
-      // Show success message
+      // Validate that modules were created (JSONB array from RPC)
+      if (
+        !result.moduleIds ||
+        !Array.isArray(result.moduleIds) ||
+        result.moduleIds.length === 0
+      ) {
+        console.error("[ExchangeCode] No modules returned from RPC:", {
+          attemptId: result.attemptId,
+          moduleIds: result.moduleIds,
+        });
+        setError(
+          "Test modules not created. Please contact support with attempt ID: " +
+            result.attemptId,
+        );
+        return;
+      }
+
+      console.log("[ExchangeCode] Join successful:", {
+        attemptId: result.attemptId,
+        paperId: result.paperId,
+        status: result.status,
+        modulesCount: result.moduleIds.length,
+        modules: result.moduleIds.map((m) => ({
+          type: m.module_type,
+          status: m.status,
+        })),
+      });
+
+      // Store attempt info in sessionStorage
+      sessionStorage.setItem("attemptId", result.attemptId);
+      sessionStorage.setItem("paperId", result.paperId);
+      sessionStorage.setItem("attemptStatus", result.status || "created");
+
+      // Store module info (JSONB array from RPC)
+      sessionStorage.setItem("moduleIds", JSON.stringify(result.moduleIds));
+
+      // Show success message based on status
       if (result.status === "resumed") {
         toast.success("Resuming your previous attempt");
       } else {
-        toast.success("Successfully joined the test!");
+        toast.success(
+          `Test joined successfully! ${result.moduleIds.length} modules ready.`,
+        );
       }
 
       // Get center slug from current path
@@ -90,7 +131,7 @@ export default function JoinCenterPage() {
       // Redirect to exam interface
       router.push(`/mock-test/${centerSlug}/${result.attemptId}`);
     } catch (err) {
-      console.error(err);
+      console.error("[ExchangeCode] Unexpected error:", err);
       setError("Connection failed. Please try again.");
     } finally {
       setIsLoading(false);

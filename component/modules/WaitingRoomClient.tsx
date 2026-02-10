@@ -28,7 +28,7 @@ interface WaitingRoomClientProps {
 
 interface ModuleStatus {
   module_id: string;
-  status: "not_started" | "in_progress" | "completed";
+  status: "pending" | "not_started" | "in_progress" | "completed";
 }
 
 export default function WaitingRoomClient({
@@ -42,6 +42,8 @@ export default function WaitingRoomClient({
     {},
   );
   const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   // Fetch module statuses from database
   useEffect(() => {
@@ -49,34 +51,87 @@ export default function WaitingRoomClient({
       try {
         const supabase = createClient();
 
-        // Fetch all attempt_modules for this attempt
+        console.log(
+          "[WaitingRoom] Fetching module statuses for attempt:",
+          attemptId,
+        );
+
+        // Fetch all attempt_modules for this attempt (created by join_mock_test RPC)
         const { data, error } = await supabase
           .from("attempt_modules")
-          .select("module_id, status")
-          .eq("attempt_id", attemptId);
+          .select("module_id, status, module_type")
+          .eq("attempt_id", attemptId)
+          .order("module_type");
 
         if (error) {
-          console.error("[WaitingRoom] Error fetching module statuses:", {
+          console.error("[WaitingRoom] Database error:", {
             message: error.message,
             details: error.details,
             hint: error.hint,
             code: error.code,
+            attemptId,
           });
-          // Continue anyway - show all modules as available if fetch fails
+
+          setHasError(true);
+          setErrorMessage(
+            "Failed to load test data. Please refresh the page or contact support.",
+          );
           setIsLoading(false);
           return;
         }
 
-        // Build status map
+        // Critical validation: Modules MUST exist (created by join_mock_test RPC)
+        if (!data || data.length === 0) {
+          console.error(
+            "[WaitingRoom] CRITICAL: No attempt_modules found for attempt:",
+            attemptId,
+          );
+          console.error(
+            "[WaitingRoom] This means join_mock_test RPC failed to create modules",
+          );
+          console.error(
+            "[WaitingRoom] Check if:",
+            "\n  1. join_mock_test.sql is deployed to database",
+            "\n  2. Paper has modules assigned (listening/reading/writing)",
+            "\n  3. RPC executed successfully during OTP validation",
+          );
+
+          // Try to get info from sessionStorage as fallback
+          const storedModules = sessionStorage.getItem("moduleIds");
+          if (storedModules) {
+            console.warn(
+              "[WaitingRoom] Found modules in sessionStorage but not in database:",
+              storedModules,
+            );
+          }
+
+          setHasError(true);
+          setErrorMessage(
+            "Test modules not found. The test may not have been set up correctly. Please try joining again or contact support with attempt ID: " +
+              attemptId,
+          );
+          setIsLoading(false);
+          return;
+        }
+
+        // Build status map (module_id -> status)
         const statusMap: Record<string, string> = {};
-        data?.forEach((item: ModuleStatus) => {
+        data.forEach((item: ModuleStatus & { module_type?: string }) => {
           statusMap[item.module_id] = item.status;
         });
 
-        console.log("[WaitingRoom] Module statuses:", statusMap);
+        console.log("[WaitingRoom] Module statuses loaded successfully:", {
+          attemptId,
+          modulesFound: data.length,
+          moduleTypes: data.map((m: any) => m.module_type).join(", "),
+          statuses: data.map((m: any) => `${m.module_type}:${m.status}`),
+        });
+
         setModuleStatuses(statusMap);
       } catch (error) {
-        console.error("[WaitingRoom] Failed to load module statuses:", error);
+        console.error("[WaitingRoom] Unexpected error:", error);
+        setHasError(true);
+        setErrorMessage("An unexpected error occurred. Please try again.");
       } finally {
         setIsLoading(false);
       }
@@ -129,8 +184,15 @@ export default function WaitingRoomClient({
   ) => {
     // Don't allow navigation to completed modules
     if (status === "completed") {
+      console.log(
+        `[WaitingRoom] Module ${moduleType} is completed, cannot re-enter`,
+      );
       return;
     }
+
+    console.log(
+      `[WaitingRoom] Navigating to ${moduleType} module (status: ${status || "pending"})`,
+    );
 
     // Navigate to module-specific route
     router.push(`/mock-test/${centerSlug}/${attemptId}/${moduleType}`);
@@ -148,6 +210,31 @@ export default function WaitingRoomClient({
               Preparing Your Test
             </h2>
             <p className="text-gray-600 mb-6">Loading test modules...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error if modules weren't created properly
+  if (hasError) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-red-50 to-orange-50 flex items-center justify-center p-6">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
+          <div className="text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-100 mb-4">
+              <Lock className="w-8 h-8 text-red-600" />
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              Test Setup Error
+            </h2>
+            <p className="text-gray-600 mb-6">{errorMessage}</p>
+            <button
+              onClick={() => router.push(`/mock-test/${centerSlug}`)}
+              className="w-full py-3 px-4 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white font-semibold rounded-xl transition-all duration-200"
+            >
+              Return to Tests
+            </button>
           </div>
         </div>
       </div>
@@ -174,6 +261,8 @@ export default function WaitingRoomClient({
             const status = moduleStatuses[module.id];
             const isCompleted = status === "completed";
             const isInProgress = status === "in_progress";
+            const isPending =
+              status === "pending" || status === "not_started" || !status;
 
             return (
               <button

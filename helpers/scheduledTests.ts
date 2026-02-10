@@ -208,6 +208,11 @@ export async function joinMockTest(
   attemptId?: string;
   paperId?: string;
   status?: string;
+  moduleIds?: Array<{
+    module_id: string;
+    module_type: string;
+    status: string;
+  }>;
   error?: string;
 }> {
   try {
@@ -220,7 +225,7 @@ export async function joinMockTest(
     });
 
     if (error) {
-      console.error("Error joining mock test:", error);
+      console.error("[joinMockTest] RPC error:", error);
       return {
         success: false,
         error: error.message || "Failed to join test",
@@ -236,14 +241,22 @@ export async function joinMockTest(
 
     const result = data[0];
 
+    console.log("[joinMockTest] Success:", {
+      attemptId: result.attempt_id,
+      paperId: result.paper_id,
+      status: result.join_status,
+      modulesCount: result.module_ids?.length || 0,
+    });
+
     return {
       success: true,
       attemptId: result.attempt_id,
       paperId: result.paper_id,
-      status: result.status,
+      status: result.join_status,
+      moduleIds: result.module_ids || [],
     };
   } catch (error) {
-    console.error("Error in joinMockTest:", error);
+    console.error("[joinMockTest] Unexpected error:", error);
     return {
       success: false,
       error: "An unexpected error occurred",
