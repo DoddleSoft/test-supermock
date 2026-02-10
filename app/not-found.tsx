@@ -9,8 +9,13 @@ import { useAuth } from "@/context/AuthContext";
 
 export default function NotFound() {
   const pathname = usePathname();
-  const { studentCenterSlug } = useAuth();
+
+  // ⚠ Safe default first (important for build)
   const [mockTestHref, setMockTestHref] = useState("/mock-test");
+
+  // Don't read auth during build render
+  const auth = useAuth?.();
+  const studentCenterSlug = auth?.studentCenterSlug;
 
   const slugFromPath = useMemo(() => {
     if (!pathname) return null;
@@ -23,62 +28,50 @@ export default function NotFound() {
   }, [pathname]);
 
   useEffect(() => {
+    // Only runs in browser → safe
     if (slugFromPath) {
       setMockTestHref(`/mock-test/${slugFromPath}`);
       return;
     }
+
     if (studentCenterSlug) {
       setMockTestHref(`/mock-test/${studentCenterSlug}`);
       return;
     }
-    const centerSlug = sessionStorage.getItem("centerSlug");
-    if (centerSlug) {
-      setMockTestHref(`/mock-test/${centerSlug}`);
+
+    if (typeof window !== "undefined") {
+      const centerSlug = sessionStorage.getItem("centerSlug");
+      if (centerSlug) {
+        setMockTestHref(`/mock-test/${centerSlug}`);
+      }
     }
   }, [slugFromPath, studentCenterSlug]);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-[#FAFAFA] px-6 text-center">
-      {/* Subtle background element */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-[10%] -left-[10%] h-[40%] w-[40%] rounded-full bg-gradient-to-br from-gray-100/50 to-transparent blur-3xl" />
-      </div>
-
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.8, ease: "easeOut" }}
-        className="relative z-10"
       >
         <span className="text-5xl font-medium tracking-[0.2em] text-gray-400 uppercase">
           Error 404
         </span>
 
         <p className="mx-auto mt-6 max-w-lg text-md leading-relaxed text-gray-500">
-          The page you are looking for has been moved to the void or never
-          existed in the first place.
+          The page you are looking for has been moved or never existed.
         </p>
 
         <div className="mt-12">
           <Link
             href={mockTestHref}
-            className="group relative inline-flex items-center gap-2 overflow-hidden rounded-full border border-gray-900 bg-gray-900 px-8 py-3 text-white transition-all hover:bg-transparent hover:text-gray-900"
+            className="inline-flex items-center gap-2 rounded-full border border-gray-900 bg-gray-900 px-8 py-3 text-white hover:bg-transparent hover:text-gray-900"
           >
-            <motion.span
-              className="flex items-center gap-2"
-              whileHover={{ x: -4 }}
-            >
-              <ArrowLeft size={18} />
-              <span className="text-sm font-medium">Back to Home</span>
-            </motion.span>
+            <ArrowLeft size={18} />
+            <span className="text-sm font-medium">Back to Home</span>
           </Link>
         </div>
       </motion.div>
-
-      {/* Minimal Footer Decoration */}
-      <div className="absolute bottom-12 left-1/2 -translate-x-1/2">
-        <div className="h-[1px] w-12 bg-gray-200" />
-      </div>
     </div>
   );
 }
