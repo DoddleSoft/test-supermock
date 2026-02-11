@@ -79,7 +79,7 @@ export default function JoinCenterPage() {
         return;
       }
 
-      // Validate that modules were created (JSONB array from RPC)
+      // Validate that modules exist (JSONB array from RPC)
       if (
         !result.moduleIds ||
         !Array.isArray(result.moduleIds) ||
@@ -90,7 +90,7 @@ export default function JoinCenterPage() {
           moduleIds: result.moduleIds,
         });
         setError(
-          "Test modules not created. Please contact support with attempt ID: " +
+          "Test modules not available. Please contact support with attempt ID: " +
             result.attemptId,
         );
         return;
@@ -110,19 +110,15 @@ export default function JoinCenterPage() {
       // Store attempt info in sessionStorage
       sessionStorage.setItem("attemptId", result.attemptId);
       sessionStorage.setItem("paperId", result.paperId);
-      sessionStorage.setItem("attemptStatus", result.status || "created");
+      sessionStorage.setItem("attemptStatus", result.status || "joined");
 
       // Store module info (JSONB array from RPC)
       sessionStorage.setItem("moduleIds", JSON.stringify(result.moduleIds));
 
-      // Show success message based on status
-      if (result.status === "resumed") {
-        toast.success("Resuming your previous attempt");
-      } else {
-        toast.success(
-          `Test joined successfully! ${result.moduleIds.length} modules ready.`,
-        );
-      }
+      // Show success message
+      toast.success(
+        `Test joined successfully! ${result.moduleIds.length} modules ready.`,
+      );
 
       // Get center slug from current path
       const pathParts = window.location.pathname.split("/");
