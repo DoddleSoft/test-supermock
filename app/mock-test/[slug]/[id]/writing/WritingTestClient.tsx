@@ -201,11 +201,6 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
     });
   };
 
-  // Recommended word counts
-  const getRecommendedWordCount = (sectionIndex: number) => {
-    return sectionIndex === 0 ? 150 : 250; // Task 1: 150 words, Task 2: 250 words
-  };
-
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Full-screen loading overlay during submission */}

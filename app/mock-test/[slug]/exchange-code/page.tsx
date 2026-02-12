@@ -115,11 +115,6 @@ export default function JoinCenterPage() {
       // Store module info (JSONB array from RPC)
       sessionStorage.setItem("moduleIds", JSON.stringify(result.moduleIds));
 
-      // Show success message
-      toast.success(
-        `Test joined successfully! ${result.moduleIds.length} modules ready.`,
-      );
-
       // Get center slug from current path
       const pathParts = window.location.pathname.split("/");
       const centerSlug = pathParts[2]; // /mock-test/[slug]/exchange-code

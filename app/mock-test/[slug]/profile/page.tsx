@@ -21,6 +21,22 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
     return notFound();
   }
 
+  // Initialize default values
+  let tests: Array<{
+    attempt_id: string;
+    test_number: number;
+    test_title: string;
+    overall_score: number;
+    completed_at: string;
+    started_at: string;
+    modules: {
+      listening: number;
+      reading: number;
+      writing: number;
+      speaking: number;
+    };
+  }> = [];
+
   // Call RPC to get student test scores with module breakdown
   const { data: scoresData, error: scoresError } = await supabase.rpc(
     "get_student_test_scores",
@@ -31,34 +47,33 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
 
   if (scoresError) {
     console.error("Error fetching test scores:", scoresError);
-    return notFound();
+    // Don't return notFound - just use empty tests array
+  } else {
+    const result = scoresData as {
+      success: boolean;
+      error?: string;
+      student_id?: string;
+      tests?: Array<{
+        attempt_id: string;
+        test_number: number;
+        test_title: string;
+        overall_score: number;
+        completed_at: string;
+        started_at: string;
+        modules: {
+          listening: number;
+          reading: number;
+          writing: number;
+          speaking: number;
+        };
+      }>;
+    };
+
+    // Only assign tests if the result is successful and has tests
+    if (result && result.success && result.tests && result.tests.length > 0) {
+      tests = result.tests;
+    }
   }
-
-  const result = scoresData as {
-    success: boolean;
-    error?: string;
-    student_id?: string;
-    tests?: Array<{
-      attempt_id: string;
-      test_number: number;
-      test_title: string;
-      overall_score: number;
-      completed_at: string;
-      started_at: string;
-      modules: {
-        listening: number;
-        reading: number;
-        writing: number;
-        speaking: number;
-      };
-    }>;
-  };
-
-  if (!result.success || !result.tests) {
-    return notFound();
-  }
-
-  const tests = result.tests;
   const latestTest = tests[0];
 
   // Prepare module scores for latest test
@@ -72,14 +87,17 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
       };
 
   // Prepare chart data - reverse to show oldest to newest
-  const chartData = tests.reverse().map((test) => ({
-    label: `T${test.test_number}`,
-    testTitle: test.test_title,
-    listening: test.modules.listening || 0,
-    reading: test.modules.reading || 0,
-    writing: test.modules.writing || 0,
-    overall: test.overall_score || 0,
-  }));
+  const chartData =
+    tests.length > 0
+      ? tests.reverse().map((test) => ({
+          label: `T${test.test_number}`,
+          testTitle: test.test_title,
+          listening: test.modules.listening || 0,
+          reading: test.modules.reading || 0,
+          writing: test.modules.writing || 0,
+          overall: test.overall_score || 0,
+        }))
+      : [];
 
   const minScore = 5;
   const maxScore = 9;
@@ -106,23 +124,17 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
         <div className="lg:col-span-9 max-w-7xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
             <div className="lg:col-span-5">
-              {latestTest ? (
-                <OverallScoreCard
-                  overallScore={latestTest.overall_score || 0}
-                  testDate={formatDate(latestTest.completed_at)}
-                  testName={latestTest.test_title || "IELTS MOCK TEST"}
-                  listening={moduleScores.listening}
-                  reading={moduleScores.reading}
-                  writing={moduleScores.writing}
-                  speaking={moduleScores.speaking}
-                />
-              ) : (
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8 text-center">
-                  <p className="text-gray-600">
-                    No completed tests yet. Start your first test!
-                  </p>
-                </div>
-              )}
+              <OverallScoreCard
+                overallScore={latestTest?.overall_score || 0}
+                testDate={
+                  latestTest ? formatDate(latestTest.completed_at) : "N/A"
+                }
+                testName={latestTest?.test_title || "IELTS MOCK TEST"}
+                listening={moduleScores.listening || 0}
+                reading={moduleScores.reading || 0}
+                writing={moduleScores.writing || 0}
+                speaking={moduleScores.speaking || 0}
+              />
             </div>
 
             {/* Chart Section */}
@@ -248,6 +260,15 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
                   </div>
                 )}
               </div>
+
+              {!latestTest && (
+                <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
+                  <p className="text-sm text-blue-700">
+                    No completed tests yet. Start your first test to see your
+                    scores!
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>

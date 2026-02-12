@@ -22,14 +22,21 @@ export function LoginForm() {
     password: "",
   });
 
-  // Check if user just registered
+  // Check if user just registered or reset password
   useEffect(() => {
     const registered = searchParams.get("registered");
+    const passwordReset = searchParams.get("password_reset");
     const authError = searchParams.get("error");
 
     if (registered === "true") {
       const msg =
         "Account created successfully! Please check your email to verify your account, then sign in.";
+      toast.success(msg);
+    }
+
+    if (passwordReset === "true") {
+      const msg =
+        "Password reset successfully! Please sign in with your new password.";
       toast.success(msg);
     }
 
@@ -124,8 +131,6 @@ export function LoginForm() {
     }
 
     try {
-      toast.loading("Signing in...");
-
       // Step 1: Validate credentials with Supabase Auth
       const result = await signIn(formData.email, formData.password);
 
@@ -203,7 +208,7 @@ export function LoginForm() {
       }
 
       // Step 4: Success - Redirect to /mock-test/[slug]
-      toast.success(`Signed in successfully! Redirecting to ${center.slug}...`);
+      toast.success(`Signed in successfully!`);
       setTimeout(() => {
         router.push(`/mock-test/${center.slug}`);
       }, 1000);

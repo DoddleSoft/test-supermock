@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Menu, X } from "lucide-react";
+import { Menu, X, LogOut } from "lucide-react";
 import Image from "next/image";
 import { useAuth } from "@/context/AuthContext";
 import { authService } from "@/helpers/auth";
@@ -14,9 +14,9 @@ interface NavbarProps {
   disableProfileLink?: boolean;
 }
 
-export default function Navbar({ 
-  hideInstructions = false, 
-  disableProfileLink = false 
+export default function Navbar({
+  hideInstructions = false,
+  disableProfileLink = false,
 }: NavbarProps) {
   const router = useRouter();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -87,6 +87,16 @@ export default function Navbar({
     }
   };
 
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      // signOut in AuthContext already handles redirect to /auth/login
+    } catch (error) {
+      console.error("Logout error:", error);
+      toast.error("Failed to logout. Please try again.");
+    }
+  };
+
   return (
     <nav
       className={`fixed top-0 left-0 right-0 z-50 flex justify-center transition-all duration-300 pointer-events-none ${
@@ -131,10 +141,8 @@ export default function Navbar({
           )}
 
           {/* --- CTA & Mobile Toggle --- */}
-          <div className="flex items-center gap-3 md:gap-4">
-            <div className="flex gap-4 justify-end">
-              {/* CENTER: Center Name */}
-
+          <div className="flex items-center gap-2">
+            <div className="flex gap-2 justify-end">
               {disableProfileLink ? (
                 <div className="flex items-center gap-3 pr-2 border-r border-red-400 border-r-2 rounded-lg px-3 py-2">
                   <div className="text-right">
@@ -165,6 +173,16 @@ export default function Navbar({
                   </div>
                 </Link>
               )}
+
+              {/* Logout Button */}
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-4 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                title="Logout"
+              >
+                <LogOut size={18} />
+                <span className="hidden md:inline">Logout</span>
+              </button>
             </div>
 
             {/* Mobile Toggle Button */}

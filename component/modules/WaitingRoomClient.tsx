@@ -128,6 +128,15 @@ export default function WaitingRoomClient({
         });
 
         setModuleStatuses(statusMap);
+
+        // Check if ALL modules are completed - if so, redirect to hub
+        const allCompleted = data.every((m: ModuleStatus) => m.status === "completed");
+        if (allCompleted && data.length > 0) {
+          console.log("[WaitingRoom] All modules completed, redirecting to hub page");
+          setTimeout(() => {
+            router.push(`/mock-test/${centerSlug}`);
+          }, 1500);
+        }
       } catch (error) {
         console.error("[WaitingRoom] Unexpected error:", error);
         setHasError(true);
@@ -145,7 +154,7 @@ export default function WaitingRoomClient({
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [attemptId]);
+  }, [attemptId, router, centerSlug]);
 
   const getModuleIcon = (type: string) => {
     switch (type) {
@@ -242,15 +251,15 @@ export default function WaitingRoomClient({
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 flex items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-4xl w-full">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 flex items-center justify-center">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-5xl px-8 py-4 pt-12 w-full">
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-green-100 mb-4">
             <CheckCircle className="w-10 h-10 text-green-600" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Test Ready!</h1>
-          <p className="text-gray-600">
+
+          <p className="text-gray-600 font-semibold text-lg">
             Select a module to begin your IELTS mock test
           </p>
         </div>
@@ -261,8 +270,6 @@ export default function WaitingRoomClient({
             const status = moduleStatuses[module.id];
             const isCompleted = status === "completed";
             const isInProgress = status === "in_progress";
-            const isPending =
-              status === "pending" || status === "not_started" || !status;
 
             return (
               <button
@@ -328,7 +335,7 @@ export default function WaitingRoomClient({
                         }`}
                       >
                         {isCompleted ? (
-                          <Lock className="h-6 w-6" />
+                          <Lock className="h-6 w-6 text-gray-900" />
                         ) : (
                           getModuleIcon(module.module_type)
                         )}
@@ -350,37 +357,6 @@ export default function WaitingRoomClient({
                       module.module_type.slice(1)}{" "}
                     Test
                   </h3>
-
-                  <div className="flex items-center gap-3 text-sm">
-                    <span
-                      className={`flex items-center gap-1 transition-colors ${
-                        isCompleted
-                          ? "text-gray-400"
-                          : "text-gray-600 group-hover:text-white/90"
-                      }`}
-                    >
-                      <Clock className="w-4 h-4" />
-                      60 min
-                    </span>
-                    <span
-                      className={`transition-colors ${
-                        isCompleted
-                          ? "text-gray-300"
-                          : "text-gray-400 group-hover:text-white/70"
-                      }`}
-                    >
-                      •
-                    </span>
-                    <span
-                      className={`capitalize transition-colors ${
-                        isCompleted
-                          ? "text-gray-400"
-                          : "text-gray-600 group-hover:text-white/90"
-                      }`}
-                    >
-                      {module.module_type}
-                    </span>
-                  </div>
                 </div>
               </button>
             );
@@ -388,7 +364,7 @@ export default function WaitingRoomClient({
         </div>
 
         {/* Footer Note */}
-        <div className="mt-8 p-4 bg-blue-50 rounded-lg border border-blue-200">
+        <div className="mt-8 px-4 py-2 bg-blue-50 rounded-lg border border-blue-200">
           <p className="text-sm text-blue-800">
             <strong>Note:</strong> Once you start a module, the timer will begin
             automatically. Completed modules are locked and cannot be

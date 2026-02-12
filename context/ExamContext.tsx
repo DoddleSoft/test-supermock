@@ -135,6 +135,8 @@ interface ExamContextType extends ExamState {
     bandScore?: number;
     error?: string;
     nextModuleUrl?: string;
+    attemptCompleted?: boolean;
+    nextModuleType?: string | null;
   }>;
   saveProgress: () => Promise<void>;
   dismissSubmitDialog: () => void;
@@ -551,6 +553,8 @@ export function ExamProvider({
       bandScore?: number;
       error?: string;
       nextModuleUrl?: string;
+      attemptCompleted?: boolean;
+      nextModuleType?: string | null;
     }> => {
       if (!state.currentAttemptModule) {
         return { success: false, error: "No module loaded" };

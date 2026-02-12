@@ -35,7 +35,12 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Define public routes that don't require authentication
-  const publicRoutes = ["/auth/login", "/auth/register", "/auth/callback"];
+  const publicRoutes = [
+    "/auth/login",
+    "/auth/register",
+    "/auth/callback",
+    "/auth/reset-password",
+  ];
   const isPublicRoute = publicRoutes.some((route) =>
     pathname.startsWith(route),
   );
@@ -45,18 +50,29 @@ export async function proxy(request: NextRequest) {
     return response;
   }
 
-  // Root path - redirect based on authentication
-  if (pathname === "/") {
-    if (!user) {
-      return NextResponse.redirect(new URL("/auth/login", request.url));
-    }
-    // User is authenticated, redirect to mock-test hub (will handle center redirect)
-    return NextResponse.redirect(new URL("/mock-test", request.url));
+  // If no valid user session exists, clear all auth cookies and redirect to login
+  if (!user) {
+    // Clear Supabase auth cookies
+    const authCookies = request.cookies
+      .getAll()
+      .filter(
+        (cookie) =>
+          cookie.name.includes("supabase") ||
+          cookie.name.includes("auth-token") ||
+          cookie.name.includes("sb-"),
+      );
+
+    authCookies.forEach((cookie) => {
+      response.cookies.delete(cookie.name);
+    });
+
+    return NextResponse.redirect(new URL("/auth/login", request.url));
   }
 
-  // Protected routes - require authentication
-  if (!user && !isPublicRoute) {
-    return NextResponse.redirect(new URL("/auth/login", request.url));
+  // Root path - redirect based on authentication
+  if (pathname === "/") {
+    // User is authenticated, redirect to mock-test hub (will handle center redirect)
+    return NextResponse.redirect(new URL("/mock-test", request.url));
   }
 
   // Validate center affiliation for mock-test routes
