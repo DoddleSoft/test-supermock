@@ -104,9 +104,9 @@ export function RegisterForm() {
     }
 
     setIsLoading(true);
+    const toastId = toast.loading("Creating your account...");
 
     try {
-      toast.loading("Creating your account...");
       const result = await signUp(
         formData.email,
         formData.password,
@@ -118,23 +118,25 @@ export function RegisterForm() {
         const errorMsg =
           result.error || "Registration failed. Please try again.";
         setError(errorMsg);
-        toast.error(errorMsg);
+        // Update the EXISTING loading toast to an error toast
+        toast.error(errorMsg, { id: toastId });
         setIsLoading(false);
         return;
       }
 
-      // Show success message
-      toast.success("Account created successfully! Redirecting to login...");
+      toast.success("Account created successfully! Redirecting...", {
+        id: toastId,
+      });
 
       // Redirect to login after registration
       setTimeout(() => {
         router.push("/auth/login?registered=true");
-      }, 1500);
+      }, 1000);
     } catch (error) {
-      const errorMsg =
-        "An unexpected error occurred during registration. Please check your internet connection and try again.";
+      const errorMsg = "An unexpected error occurred. Please try again.";
       setError(errorMsg);
-      toast.error(errorMsg);
+      // Update the EXISTING loading toast to an error toast
+      toast.error(errorMsg, { id: toastId });
       console.error("Registration error:", error);
       setIsLoading(false);
     }
