@@ -24,7 +24,6 @@ export interface AuthContextType {
     email: string,
     password: string,
     fullName: string,
-    role?: "regular" | "admin" | "owner" | "examiner",
     captchaToken?: string,
   ) => Promise<{ success: boolean; error?: string }>;
   signIn: (
@@ -210,18 +209,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     email: string,
     password: string,
     fullName: string,
-    role?: "regular" | "admin" | "owner" | "examiner",
     captchaToken?: string,
   ) => {
     try {
       setLoading(true);
 
-      // Register user with Supabase auth
+      // Register user with Supabase auth (student-only platform)
       const authResult = await authService.register({
         email,
         password,
         fullName,
-        role: role || "regular",
         captchaToken,
       });
 
@@ -232,13 +229,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
       }
 
-      if (authResult.session) {
-        await authService.upsertUserFromSession(authResult.session, {
-          fullName,
-          role: role || "regular",
-        });
-      }
-
+      // Database trigger will automatically create student_profiles entry
       return { success: true };
     } catch (error) {
       return {
@@ -268,12 +259,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
       }
 
-      if (result.session) {
-        await authService.upsertUserFromSession(result.session, {
-          role: "regular",
-        });
-      }
-
+      // Database trigger ensures student profile exists
       return { success: true };
     } catch (error) {
       return {

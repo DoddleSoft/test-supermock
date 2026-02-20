@@ -154,7 +154,6 @@ class AuthService {
             emailRedirectTo: `${siteUrl}/auth/callback`,
             data: {
               full_name: data.fullName,
-              role: data.role || "regular",
             },
             captchaToken: data.captchaToken,
           },

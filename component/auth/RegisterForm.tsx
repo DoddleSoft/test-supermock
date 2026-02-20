@@ -111,7 +111,6 @@ export function RegisterForm() {
         formData.email,
         formData.password,
         formData.fullName.trim(),
-        undefined,
         captchaToken,
       );
 
