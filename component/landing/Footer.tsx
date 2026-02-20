@@ -17,22 +17,22 @@ export default function Footer() {
                 height={40}
               />
               <Link href="/" className="inline-block">
-                <span className="text-2xl font-bold tracking-tight text-supermock-text">
-                  Super<span className="text-supermock-red">Mock</span>
+                <span className="text-2xl font-bold tracking-tight text-gray-700">
+                  Super<span className="text-red-700">Mock</span>
                 </span>
               </Link>
             </div>
 
-            <p className="text-sm md:text-base mb-4 text-supermock-text-secondary leading-relaxed max-w-md">
+            <p className="text-sm md:text-base mb-4 text-gray-500 leading-relaxed max-w-md">
               Mock test platform for IELTS training centres.
             </p>
 
-            <div className="flex items-center gap-4 justify-center sm:justify-start text-supermock-text-secondary/60">
+            <div className="flex items-center gap-4 justify-center sm:justify-start text-gray-500/60">
               <Link
                 href="https://www.facebook.com/supermock.net"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:text-supermock-red transition-colors"
+                className="hover:text-red-700 transition-colors"
               >
                 <Facebook className="w-5 h-5" />
               </Link>
@@ -41,7 +41,7 @@ export default function Footer() {
                 href="https://www.instagram.com/supermock.ielts/"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:text-supermock-red transition-colors"
+                className="hover:text-red-700 transition-colors"
               >
                 <Instagram className="w-5 h-5" />
               </Link>
@@ -50,7 +50,7 @@ export default function Footer() {
                 href="https://www.tiktok.com/@supermock.ielts"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:text-supermock-red transition-colors"
+                className="hover:text-red-700 transition-colors"
                 aria-label="TikTok"
               >
                 <svg
@@ -67,16 +67,16 @@ export default function Footer() {
 
           {/* Contact */}
           <div className="flex flex-col items-center sm:items-start text-center sm:text-left">
-            <h3 className="font-semibold text-supermock-text mb-4 md:mb-6">
+            <h3 className="font-semibold text-gray-700 mb-4 md:mb-6">
               Contact
             </h3>
-            <ul className="space-y-3 md:space-y-4 text-supermock-text-secondary text-sm md:text-base">
+            <ul className="space-y-3 md:space-y-4 text-gray-500 text-sm md:text-base">
               <li className="flex items-center gap-3 justify-center sm:justify-start">
-                <Mail className="w-5 h-5 text-supermock-red flex-shrink-0" />
+                <Mail className="w-5 h-5 text-red-700 flex-shrink-0" />
                 <span>contact@supermock.net</span>
               </li>
               <li className="flex items-center gap-3 justify-center sm:justify-start">
-                <Phone className="w-5 h-5 text-supermock-red flex-shrink-0" />
+                <Phone className="w-5 h-5 text-red-700 flex-shrink-0" />
                 <span>+880 1847 089 622</span>
               </li>
             </ul>
