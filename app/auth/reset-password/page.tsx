@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Mail, Lock, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { BrandedSection } from "@/component/auth/BrandedSection";
 import { createClient } from "@/utils/supabase/client";
+import { Turnstile, TurnstileInstance } from "@marsidev/react-turnstile";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -17,6 +18,8 @@ export default function ResetPasswordPage() {
     useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const turnstileRef = useRef<TurnstileInstance>(null);
 
   const [formData, setFormData] = useState({
     email: "",
@@ -73,6 +76,12 @@ export default function ResetPasswordPage() {
       return false;
     }
 
+    // 6. Validate captcha token
+    if (!captchaToken) {
+      toast.error("Please complete the captcha verification.");
+      return false;
+    }
+
     return true;
   };
 
@@ -92,6 +101,9 @@ export default function ResetPasswordPage() {
         await supabase.auth.signInWithPassword({
           email: formData.email,
           password: formData.currentPassword,
+          options: {
+            captchaToken: captchaToken || undefined,
+          },
         });
 
       if (signInError || !signInData.user) {
@@ -266,6 +278,16 @@ export default function ResetPasswordPage() {
                 Must be at least 8 characters
               </p>
             </div>
+
+            {/* Turnstile Captcha */}
+
+            <Turnstile
+              ref={turnstileRef}
+              siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+              onSuccess={(token) => setCaptchaToken(token)}
+              onExpire={() => setCaptchaToken(null)}
+              onError={() => setCaptchaToken(null)}
+            />
 
             <button
               type="submit"

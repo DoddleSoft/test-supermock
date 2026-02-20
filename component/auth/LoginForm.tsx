@@ -296,7 +296,7 @@ export function LoginForm() {
                   href="/auth/reset-password"
                   className="text-sm text-red-600 hover:text-red-700 font-medium transition-colors"
                 >
-                  Forgot?
+                  Forgot Password?
                 </Link>
               </div>
               <div className="relative">
