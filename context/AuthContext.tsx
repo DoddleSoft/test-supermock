@@ -16,6 +16,7 @@ export interface AuthContextType {
   session: Session | null;
   userProfile: UserProfile | null;
   studentId: string | null;
+  studentName: string | null;
   studentEmail: string | null;
   studentCenterId: string | null;
   studentCenterSlug: string | null;
@@ -51,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [studentId, setStudentId] = useState<string | null>(null);
+  const [studentName, setStudentName] = useState<string | null>(null);
   const [studentEmail, setStudentEmail] = useState<string | null>(null);
   const [studentCenterId, setStudentCenterId] = useState<string | null>(null);
   const [studentCenterSlug, setStudentCenterSlug] = useState<string | null>(
@@ -101,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         setUserProfile(null);
         setStudentId(null);
+        setStudentName(null);
         setStudentEmail(null);
         setStudentCenterId(null);
         setStudentCenterSlug(null);
@@ -133,7 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data: byId, error: byIdError } = await supabase
         .from("student_profiles")
-        .select("student_id, center_id, email")
+        .select("student_id, center_id, email, name")
         .eq("student_id", authUser.id)
         .maybeSingle();
 
@@ -143,7 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ? (
               await supabase
                 .from("student_profiles")
-                .select("student_id, center_id, email")
+                .select("student_id, center_id, email, name")
                 .eq("email", authUser.email)
                 .maybeSingle()
             ).data
@@ -155,6 +158,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!studentProfile) {
         setStudentId(null);
+        setStudentName(null);
         setStudentEmail(authUser.email ?? null);
         setStudentCenterId(null);
         setStudentCenterSlug(null);
@@ -162,6 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setStudentId(studentProfile.student_id ?? null);
+      setStudentName((studentProfile as any).name ?? null);
       setStudentEmail(studentProfile.email ?? authUser.email ?? null);
       setStudentCenterId(studentProfile.center_id ?? null);
 
@@ -198,6 +203,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error("Error loading student context:", error);
       setStudentId(null);
+      setStudentName(null);
       setStudentEmail(authUser.email ?? null);
       setStudentCenterId(null);
       setStudentCenterSlug(null);
@@ -293,6 +299,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(null);
       setUserProfile(null);
       setStudentId(null);
+      setStudentName(null);
       setStudentEmail(null);
       setStudentCenterId(null);
       setStudentCenterSlug(null);
@@ -318,6 +325,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     session,
     userProfile,
     studentId,
+    studentName,
     studentEmail,
     studentCenterId,
     studentCenterSlug,

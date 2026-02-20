@@ -23,7 +23,7 @@ export default function Navbar({
   const [scrolled, setScrolled] = useState(false);
   const [centerSlug, setCenterSlug] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const { user, userProfile, signOut, loading } = useAuth();
+  const { user, userProfile, studentName, signOut, loading } = useAuth();
 
   // Check authentication and get center slug on mount
   useEffect(() => {
@@ -147,7 +147,8 @@ export default function Navbar({
                 <div className="flex items-center gap-3 pr-2 border-r border-red-400 border-r-2 rounded-lg px-3 py-2">
                   <div className="text-right">
                     <p className="text-sm font-medium text-slate-900">
-                      {userProfile?.full_name ||
+                      {studentName ||
+                        userProfile?.name ||
                         user?.email?.split("@")[0] ||
                         "User"}
                     </p>
@@ -163,7 +164,8 @@ export default function Navbar({
                 >
                   <div className="text-right">
                     <p className="text-sm font-medium text-slate-900 group-hover:text-red-600 transition-colors">
-                      {userProfile?.full_name ||
+                      {studentName ||
+                        userProfile?.name ||
                         user?.email?.split("@")[0] ||
                         "User"}
                     </p>

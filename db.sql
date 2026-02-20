@@ -13,6 +13,13 @@ CREATE TYPE public.student_type_enum AS ENUM ('regular', 'visitor', 'mock_only')
 CREATE TYPE public.user_role_enum AS ENUM ('admin', 'owner', 'examiner');
 CREATE TYPE public.verification_status AS ENUM ('pending', 'verified', 'rejected');
 
+-- Composite type for grading result items
+CREATE TYPE public.grading_result_item AS (
+  answer_id uuid,
+  is_correct boolean,
+  marks_awarded numeric
+);
+
 -- ============================================================================
 -- TABLES
 -- ============================================================================
@@ -600,10 +607,964 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $function$
 BEGIN
-  IF NEW.status = 'verified' AND OLD.status != 'verified' THEN
-    NEW.verified_at := CURRENT_TIMESTAMP;
+  IF (NEW.status = 'verified' AND (OLD.status IS DISTINCT FROM NEW.status)) THEN
+    NEW.verified_at = CURRENT_TIMESTAMP;
+  ELSIF (NEW.status != 'verified') THEN
+    NEW.verified_at = NULL;
   END IF;
   RETURN NEW;
+END;
+$function$;
+
+-- Function: Auto complete scheduled tests
+CREATE OR REPLACE FUNCTION public.auto_complete_scheduled_tests()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+BEGIN
+  UPDATE public.scheduled_tests
+  SET 
+    status = 'completed',
+    updated_at = now()
+  WHERE status = 'in_progress'
+    AND ended_at <= now();
+END;
+$function$;
+
+-- Function: Batch update grades
+CREATE OR REPLACE FUNCTION public.batch_update_grades(p_module_id uuid, p_answers jsonb, p_feedback text DEFAULT NULL::text)
+RETURNS jsonb
+LANGUAGE plpgsql
+AS $function$
+DECLARE
+  v_answer JSONB;
+  v_total_score NUMERIC := 0;
+  v_band_score NUMERIC(3,1);
+  v_module_type TEXT;
+  v_total_questions INTEGER := 0;
+BEGIN
+  SELECT am.module_type, COUNT(sa.id)
+  INTO v_module_type, v_total_questions
+  FROM attempt_modules am
+  LEFT JOIN student_answers sa ON sa.attempt_module_id = am.id
+  WHERE am.id = p_module_id
+  GROUP BY am.module_type;
+
+  FOR v_answer IN SELECT * FROM jsonb_array_elements(p_answers)
+  LOOP
+    UPDATE student_answers
+    SET 
+      is_correct = (v_answer->>'is_correct')::boolean,
+      marks_awarded = (v_answer->>'marks_awarded')::numeric
+    WHERE id = (v_answer->>'id')::uuid;
+  END LOOP;
+
+  SELECT COALESCE(SUM(marks_awarded), 0)
+  INTO v_total_score
+  FROM student_answers
+  WHERE attempt_module_id = p_module_id;
+
+  IF v_module_type = 'listening' OR v_module_type = 'reading' THEN
+    v_band_score := CASE
+      WHEN v_total_score >= 39 THEN 9.0
+      WHEN v_total_score >= 37 THEN 8.5
+      WHEN v_total_score >= 35 THEN 8.0
+      WHEN v_total_score >= 32 THEN 7.5
+      WHEN v_total_score >= 30 THEN 7.0
+      WHEN v_total_score >= 26 THEN 6.5
+      WHEN v_total_score >= 23 THEN 6.0
+      WHEN v_total_score >= 18 THEN 5.5
+      WHEN v_total_score >= 16 THEN 5.0
+      WHEN v_total_score >= 13 THEN 4.5
+      WHEN v_total_score >= 10 THEN 4.0
+      ELSE 3.5
+    END;
+  ELSIF v_module_type = 'writing' THEN
+    v_band_score := ROUND((v_total_score / v_total_questions)::numeric, 1);
+    IF v_band_score > 9.0 THEN v_band_score := 9.0; END IF;
+  ELSE
+    v_band_score := ROUND((v_total_score / v_total_questions * 9.0)::numeric, 1);
+  END IF;
+
+  UPDATE attempt_modules
+  SET 
+    score_obtained = v_total_score,
+    band_score = v_band_score,
+    feedback = COALESCE(p_feedback, feedback),
+    status = 'completed',
+    completed_at = NOW()
+  WHERE id = p_module_id;
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'total_score', v_total_score,
+    'band_score', v_band_score,
+    'updated_count', jsonb_array_length(p_answers)
+  );
+END;
+$function$;
+
+-- Function: Commit grading results (atomic transaction)
+CREATE OR REPLACE FUNCTION public.commit_grading_results(p_attempt_module_id uuid, p_total_score numeric, p_band_score numeric, p_time_spent integer, p_time_remaining integer, p_status text, p_answers grading_result_item[], p_previous_status text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+declare
+  v_rows_affected int;
+  v_attempt_id uuid;
+  v_module_type text;
+begin
+  select attempt_id, modules.module_type
+  into v_attempt_id, v_module_type
+  from attempt_modules
+  join modules on modules.id = attempt_modules.module_id
+  where attempt_modules.id = p_attempt_module_id
+    and attempt_modules.status = p_previous_status;
+  
+  if not found then
+    raise exception 'CONCURRENT_MODIFICATION: Module status changed or not found';
+  end if;
+
+  update student_answers as sa
+  set 
+    is_correct = ar.is_correct,
+    marks_awarded = ar.marks_awarded
+  from unnest(p_answers) as ar(answer_id, is_correct, marks_awarded)
+  where sa.id = ar.answer_id
+    and sa.attempt_module_id = p_attempt_module_id;
+  
+  get diagnostics v_rows_affected = row_count;
+
+  update attempt_modules
+  set 
+    score_obtained = p_total_score,
+    band_score = p_band_score,
+    time_spent_seconds = p_time_spent,
+    time_remaining_seconds = p_time_remaining,
+    status = p_status,
+    completed_at = now()
+  where id = p_attempt_module_id
+    and status = p_previous_status;
+  
+  if not found then
+    raise exception 'CONCURRENT_MODIFICATION: Module already graded by another request';
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'answers_updated', v_rows_affected,
+    'attempt_id', v_attempt_id,
+    'module_type', v_module_type
+  );
+
+exception
+  when others then
+    raise exception 'GRADING_FAILED: %', sqlerrm;
+end;
+$function$;
+
+-- Function: Generate unique test OTP
+CREATE OR REPLACE FUNCTION public.generate_unique_test_otp(target_test_id uuid)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+  new_otp integer;
+  result_otp integer;
+BEGIN
+  LOOP
+    new_otp := floor(100000 + random() * 900000)::integer;
+
+    BEGIN
+      UPDATE public.scheduled_tests
+      SET otp = new_otp
+      WHERE id = target_test_id
+      RETURNING otp INTO result_otp;
+
+      IF FOUND THEN
+        RETURN json_build_object('success', true, 'otp', result_otp);
+      ELSE
+        RETURN json_build_object('success', false, 'error', 'Test ID not found');
+      END IF;
+      
+      EXIT; 
+      
+    EXCEPTION WHEN unique_violation THEN
+      CONTINUE;
+    END;
+  END LOOP;
+END;
+$function$;
+
+-- Function: Get attempt flow status
+CREATE OR REPLACE FUNCTION public.get_attempt_flow_status(p_attempt_id uuid, p_current_module_type text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+declare
+  v_total_modules int;
+  v_completed_modules int;
+  v_next_module_type text;
+  v_attempt_completed boolean;
+  v_overall_band numeric;
+begin
+  select 
+    count(*),
+    count(*) filter (where status = 'completed')
+  into v_total_modules, v_completed_modules
+  from attempt_modules
+  where attempt_id = p_attempt_id;
+
+  v_attempt_completed := (v_total_modules = v_completed_modules);
+
+  if p_current_module_type = 'listening' then
+    v_next_module_type := 'reading';
+  elsif p_current_module_type = 'reading' then
+    v_next_module_type := 'writing';
+  else
+    v_next_module_type := null;
+  end if;
+
+  if v_next_module_type is not null then
+    perform 1
+    from attempt_modules am
+    join modules m on m.id = am.module_id
+    where am.attempt_id = p_attempt_id
+      and m.module_type = v_next_module_type
+      and am.status != 'completed';
+    
+    if not found then
+      v_next_module_type := null;
+    end if;
+  end if;
+
+  if v_attempt_completed then
+    select round(avg(band_score), 1)
+    into v_overall_band
+    from attempt_modules
+    where attempt_id = p_attempt_id
+      and band_score is not null;
+
+    update mock_attempts
+    set 
+      status = 'completed',
+      completed_at = now(),
+      overall_band_score = v_overall_band
+    where id = p_attempt_id
+      and status != 'completed';
+  end if;
+
+  return jsonb_build_object(
+    'attempt_completed', v_attempt_completed,
+    'next_module_type', v_next_module_type,
+    'overall_band_score', v_overall_band,
+    'completed_modules', v_completed_modules,
+    'total_modules', v_total_modules
+  );
+end;
+$function$;
+
+-- Function: Get center modules v2 (deep nested query)
+CREATE OR REPLACE FUNCTION public.get_center_modules_v2(p_center_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE
+  result_data jsonb;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 
+    FROM public.centers 
+    WHERE center_id = p_center_id 
+    AND user_id = auth.uid()
+  ) THEN
+    RAISE EXCEPTION 'Access denied: You do not own this center.';
+  END IF;
+
+  SELECT 
+    COALESCE(
+      jsonb_agg(
+        jsonb_build_object(
+          'module_id', m.id,
+          'module_type', m.module_type,
+          'title', m.heading,
+          'paper_id', m.paper_id,
+          'created_at', m.created_at,
+          'sections', COALESCE(
+            (
+              SELECT jsonb_agg(
+                to_jsonb(s) || jsonb_build_object(
+                  'sub_sections', COALESCE(
+                    (
+                      SELECT jsonb_agg(
+                        to_jsonb(ss) || jsonb_build_object(
+                          'questions', COALESCE(
+                            (
+                              SELECT jsonb_agg(to_jsonb(qa) ORDER BY qa.created_at)
+                              FROM public.question_answers qa
+                              WHERE qa.sub_section_id = ss.id
+                            ), 
+                            '[]'::jsonb
+                          )
+                        ) ORDER BY ss.sub_section_index ASC
+                      )
+                      FROM public.sub_sections ss
+                      WHERE ss.section_id = s.id
+                    ), 
+                    '[]'::jsonb
+                  )
+                ) ORDER BY s.section_index ASC
+              )
+              FROM public.sections s
+              WHERE s.module_id = m.id
+            ), 
+            '[]'::jsonb
+          )
+        ) ORDER BY m.created_at DESC
+      ),
+      '[]'::jsonb
+    )
+  INTO result_data
+  FROM public.modules m
+  WHERE m.center_id = p_center_id;
+
+  RETURN result_data;
+END;
+$function$;
+
+-- Function: Get center reviews
+CREATE OR REPLACE FUNCTION public.get_center_reviews(p_center_id uuid, p_module_type text DEFAULT NULL::text)
+RETURNS TABLE(answer_id uuid, attempt_module_id uuid, reference_id uuid, question_ref text, student_response text, is_correct boolean, marks_awarded double precision, answer_created_at timestamp with time zone, am_id uuid, am_attempt_id uuid, am_module_id uuid, am_status text, am_score_obtained double precision, am_band_score numeric, am_time_spent_seconds integer, am_completed_at timestamp with time zone, am_feedback text, am_module_type text, module_id uuid, module_type text, module_heading text, module_paper_id uuid, attempt_id uuid, attempt_student_id uuid, attempt_status text, attempt_created_at timestamp with time zone, attempt_completed_at timestamp with time zone)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+BEGIN
+  RETURN QUERY
+  SELECT
+    sa.id AS answer_id,
+    sa.attempt_module_id,
+    sa.reference_id,
+    sa.question_ref,
+    sa.student_response,
+    sa.is_correct,
+    sa.marks_awarded,
+    sa.created_at AS answer_created_at,
+    
+    am.id AS am_id,
+    am.attempt_id AS am_attempt_id,
+    am.module_id AS am_module_id,
+    am.status AS am_status,
+    am.score_obtained AS am_score_obtained,
+    am.band_score AS am_band_score,
+    am.time_spent_seconds AS am_time_spent_seconds,
+    am.completed_at AS am_completed_at,
+    am.feedback AS am_feedback,
+    am.module_type AS am_module_type,
+    
+    m.id AS module_id,
+    m.module_type,
+    m.heading AS module_heading,
+    m.paper_id AS module_paper_id,
+    
+    ma.id AS attempt_id,
+    ma.student_id AS attempt_student_id,
+    ma.status AS attempt_status,
+    ma.created_at AS attempt_created_at,
+    ma.completed_at AS attempt_completed_at
+    
+  FROM student_answers sa
+  INNER JOIN attempt_modules am ON sa.attempt_module_id = am.id
+  INNER JOIN modules m ON am.module_id = m.id
+  INNER JOIN mock_attempts ma ON am.attempt_id = ma.id
+  WHERE 
+    m.center_id = p_center_id
+    AND (p_module_type IS NULL OR m.module_type = p_module_type)
+  ORDER BY sa.created_at DESC;
+END;
+$function$;
+
+-- Function: Get module hierarchy
+CREATE OR REPLACE FUNCTION public.get_module_hierarchy(target_module_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_center_id uuid;
+  result_data jsonb;
+BEGIN
+  SELECT m.center_id INTO v_center_id
+  FROM public.modules m
+  JOIN public.centers c ON m.center_id = c.center_id
+  WHERE m.id = target_module_id
+  AND c.user_id = auth.uid();
+
+  IF v_center_id IS NULL THEN
+    RAISE EXCEPTION 'Access denied: Module not found or you do not have permission to view it.';
+  END IF;
+
+  SELECT 
+    to_jsonb(m) || jsonb_build_object(
+      'sections', COALESCE(
+        (
+          SELECT jsonb_agg(
+            to_jsonb(s) || jsonb_build_object(
+              'sub_sections', COALESCE(
+                (
+                  SELECT jsonb_agg(
+                    to_jsonb(ss) || jsonb_build_object(
+                      'questions', COALESCE(
+                        (
+                          SELECT jsonb_agg(to_jsonb(qa) ORDER BY qa.created_at)
+                          FROM public.question_answers qa
+                          WHERE qa.sub_section_id = ss.id
+                        ), 
+                        '[]'::jsonb
+                      )
+                    ) ORDER BY ss.sub_section_index ASC
+                  )
+                  FROM public.sub_sections ss
+                  WHERE ss.section_id = s.id
+                ), 
+                '[]'::jsonb
+              )
+            ) ORDER BY s.section_index ASC
+          )
+          FROM public.sections s
+          WHERE s.module_id = m.id
+        ), 
+        '[]'::jsonb
+      )
+    )
+  INTO result_data
+  FROM public.modules m
+  WHERE m.id = target_module_id;
+
+  RETURN result_data;
+END;
+$function$;
+
+-- Function: Get student test scores
+CREATE OR REPLACE FUNCTION public.get_student_test_scores(p_student_email text)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+  v_student_id UUID;
+  v_result JSON;
+BEGIN
+  SELECT student_id INTO v_student_id
+  FROM student_profiles
+  WHERE email = p_student_email AND status = 'active';
+  
+  IF v_student_id IS NULL THEN
+    RETURN json_build_object(
+      'success', false,
+      'error', 'Student profile not found'
+    );
+  END IF;
+  
+  WITH recent_attempts AS (
+    SELECT 
+      ma.id AS attempt_id,
+      ma.overall_band_score,
+      ma.completed_at,
+      ma.started_at,
+      st.title AS test_title,
+      ROW_NUMBER() OVER (ORDER BY ma.completed_at DESC NULLS LAST, ma.started_at DESC) AS rank
+    FROM mock_attempts ma
+    LEFT JOIN scheduled_tests st ON st.id = ma.scheduled_test_id
+    WHERE ma.student_id = v_student_id
+      AND ma.status = 'completed'
+    ORDER BY ma.completed_at DESC NULLS LAST, ma.started_at DESC
+    LIMIT 10
+  ),
+  module_scores AS (
+    SELECT 
+      ra.attempt_id,
+      ra.overall_band_score,
+      ra.completed_at,
+      ra.started_at,
+      ra.test_title,
+      ra.rank,
+      MAX(CASE WHEN am.module_type = 'listening' THEN am.band_score END) AS listening_score,
+      MAX(CASE WHEN am.module_type = 'reading' THEN am.band_score END) AS reading_score,
+      MAX(CASE WHEN am.module_type = 'writing' THEN am.band_score END) AS writing_score,
+      MAX(CASE WHEN am.module_type = 'speaking' THEN am.band_score END) AS speaking_score
+    FROM recent_attempts ra
+    LEFT JOIN attempt_modules am ON am.attempt_id = ra.attempt_id 
+      AND am.status = 'completed'
+    GROUP BY ra.attempt_id, ra.overall_band_score, ra.completed_at, ra.started_at, ra.test_title, ra.rank
+  )
+  SELECT json_build_object(
+    'success', true,
+    'student_id', v_student_id,
+    'tests', (
+      SELECT json_agg(
+        json_build_object(
+          'attempt_id', ms.attempt_id,
+          'test_number', ms.rank,
+          'test_title', COALESCE(ms.test_title, 'IELTS Mock Test'),
+          'overall_score', COALESCE(ms.overall_band_score, 0),
+          'completed_at', ms.completed_at,
+          'started_at', ms.started_at,
+          'modules', json_build_object(
+            'listening', COALESCE(ms.listening_score, 0),
+            'reading', COALESCE(ms.reading_score, 0),
+            'writing', COALESCE(ms.writing_score, 0),
+            'speaking', COALESCE(ms.speaking_score, 0)
+          )
+        ) ORDER BY ms.rank
+      )
+      FROM module_scores ms
+    )
+  ) INTO v_result;
+  
+  RETURN v_result;
+END;
+$function$;
+
+-- Function: Join mock test
+CREATE OR REPLACE FUNCTION public.join_mock_test(p_otp integer, p_scheduled_test_id uuid, p_user_email text)
+RETURNS TABLE(attempt_id uuid, paper_id uuid, join_status text, module_ids jsonb)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+#variable_conflict use_variable
+DECLARE
+  v_student_id UUID;
+  v_center_id UUID;
+  v_paper_id UUID;
+  v_scheduled_at TIMESTAMPTZ;
+  v_actual_otp INTEGER;
+  v_test_status TEXT;
+  v_attempt_id UUID;
+  v_modules_json JSONB;
+BEGIN
+  SELECT t.paper_id, t.scheduled_at, t.otp, t.status, t.center_id
+  INTO v_paper_id, v_scheduled_at, v_actual_otp, v_test_status, v_center_id
+  FROM scheduled_tests t
+  WHERE t.id = p_scheduled_test_id;
+
+  IF NOT FOUND THEN RAISE EXCEPTION 'Test not found.'; END IF;
+
+  IF v_test_status NOT IN ('scheduled', 'in_progress') THEN
+    RAISE EXCEPTION 'Test is not currently active (Status: %).', v_test_status;
+  END IF;
+
+  IF v_actual_otp IS DISTINCT FROM p_otp THEN
+    RAISE EXCEPTION 'Invalid OTP provided.';
+  END IF;
+
+  IF now() > (v_scheduled_at + interval '30 minutes') THEN
+    RAISE EXCEPTION 'Entry denied: The 30-minute entry window has closed.';
+  END IF;
+
+  SELECT sp.student_id INTO v_student_id
+  FROM student_profiles sp
+  WHERE sp.email = p_user_email 
+    AND sp.center_id = v_center_id
+    AND sp.status = 'active';
+
+  IF v_student_id IS NULL THEN
+    RAISE EXCEPTION 'Access Denied: Student email not found in this center.';
+  END IF;
+
+  SELECT ma.id INTO v_attempt_id
+  FROM mock_attempts ma
+  WHERE ma.student_id = v_student_id 
+    AND ma.scheduled_test_id = p_scheduled_test_id;
+
+  IF v_attempt_id IS NULL THEN
+    RAISE EXCEPTION 'Access Denied: You are not registered for this test.';
+  END IF;
+
+  INSERT INTO attempt_modules (attempt_id, module_id, status)
+  SELECT 
+    v_attempt_id,
+    m.id,
+    'pending'
+  FROM papers p
+  CROSS JOIN LATERAL (
+    SELECT p.listening_module_id AS id WHERE p.listening_module_id IS NOT NULL
+    UNION ALL
+    SELECT p.reading_module_id WHERE p.reading_module_id IS NOT NULL
+    UNION ALL
+    SELECT p.writing_module_id WHERE p.writing_module_id IS NOT NULL
+    UNION ALL
+    SELECT p.speaking_module_id WHERE p.speaking_module_id IS NOT NULL
+  ) AS m
+  WHERE p.id = v_paper_id
+    AND NOT EXISTS (
+      SELECT 1 FROM attempt_modules existing
+      WHERE existing.attempt_id = v_attempt_id
+        AND existing.module_id = m.id
+    );
+
+  SELECT jsonb_agg(
+    jsonb_build_object(
+      'module_id', am.module_id,
+      'module_type', am.module_type,
+      'status', am.status
+    ) ORDER BY
+      CASE am.module_type
+        WHEN 'listening' THEN 1
+        WHEN 'reading' THEN 2
+        WHEN 'writing' THEN 3
+        WHEN 'speaking' THEN 4
+      END
+  ) INTO v_modules_json
+  FROM attempt_modules am
+  WHERE am.attempt_id = v_attempt_id;
+
+  RETURN QUERY SELECT 
+    v_attempt_id, 
+    v_paper_id, 
+    'joined'::TEXT, 
+    COALESCE(v_modules_json, '[]'::jsonb);
+
+END;
+$function$;
+
+-- Function: Load paper with modules
+CREATE OR REPLACE FUNCTION public.load_paper_with_modules(p_paper_id uuid)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+  v_paper RECORD;
+  v_modules JSON;
+  v_result JSON;
+BEGIN
+  SELECT * INTO v_paper
+  FROM papers
+  WHERE id = p_paper_id;
+  
+  IF v_paper IS NULL THEN
+    RAISE EXCEPTION 'Paper not found';
+  END IF;
+  
+  WITH module_data AS (
+    SELECT 
+      m.id as module_id,
+      m.module_type,
+      m.heading,
+      m.subheading,
+      m.instruction,
+      m.center_id,
+      m.view_option,
+      m.created_at,
+      m.updated_at,
+      m.paper_id,
+      (
+        SELECT json_agg(
+          json_build_object(
+            'id', s.id,
+            'module_id', s.module_id,
+            'title', s.title,
+            'section_index', s.section_index,
+            'content_type', s.content_type,
+            'resource_url', s.resource_url,
+            'content_text', s.content_text,
+            'instruction', s.instruction,
+            'subtext', s.subtext,
+            'params', s.params,
+            'created_at', s.created_at,
+            'updated_at', s.updated_at,
+            'sub_sections', (
+              SELECT json_agg(
+                json_build_object(
+                  'id', ss.id,
+                  'section_id', ss.section_id,
+                  'boundary_text', ss.boundary_text,
+                  'sub_type', ss.sub_type,
+                  'content_template', ss.content_template,
+                  'resource_url', ss.resource_url,
+                  'instruction', ss.instruction,
+                  'sub_section_index', ss.sub_section_index,
+                  'created_at', ss.created_at,
+                  'updated_at', ss.updated_at,
+                  'questions', (
+                    SELECT json_agg(
+                      json_build_object(
+                        'id', qa.id,
+                        'question_ref', qa.question_ref,
+                        'correct_answers', qa.correct_answers,
+                        'options', qa.options,
+                        'explanation', qa.explanation,
+                        'marks', qa.marks,
+                        'created_at', qa.created_at,
+                        'updated_at', qa.updated_at
+                      ) ORDER BY qa.question_ref
+                    )
+                    FROM question_answers qa
+                    WHERE qa.sub_section_id = ss.id
+                  )
+                ) ORDER BY ss.sub_section_index
+              )
+              FROM sub_sections ss
+              WHERE ss.section_id = s.id
+            )
+          ) ORDER BY s.section_index
+        )
+        FROM sections s
+        WHERE s.module_id = m.id
+      ) as sections
+    FROM modules m
+    WHERE m.id IN (v_paper.listening_module_id, v_paper.reading_module_id, v_paper.writing_module_id, v_paper.speaking_module_id)
+  )
+  SELECT json_object_agg(
+    md.module_type,
+    json_build_object(
+      'id', md.module_id,
+      'paper_id', md.paper_id,
+      'module_type', md.module_type,
+      'heading', md.heading,
+      'subheading', md.subheading,
+      'instruction', md.instruction,
+      'center_id', md.center_id,
+      'view_option', md.view_option,
+      'created_at', md.created_at,
+      'updated_at', md.updated_at,
+      'sections', md.sections
+    )
+  ) INTO v_modules
+  FROM module_data md;
+  
+  SELECT json_build_object(
+    'paper', json_build_object(
+      'id', v_paper.id,
+      'center_id', v_paper.center_id,
+      'title', v_paper.title,
+      'paper_type', v_paper.paper_type,
+      'instruction', v_paper.instruction,
+      'tests_conducted', v_paper.tests_conducted,
+      'is_active', v_paper.is_active,
+      'created_at', v_paper.created_at,
+      'updated_at', v_paper.updated_at
+    ),
+    'modules', v_modules
+  ) INTO v_result;
+  
+  RETURN v_result;
+END;
+$function$;
+
+-- Function: Upsert student answers
+CREATE OR REPLACE FUNCTION public.upsert_student_answers(p_attempt_module_id uuid, p_answers jsonb)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+declare
+  v_inserted int := 0;
+begin
+  insert into student_answers (
+    attempt_module_id,
+    reference_id,
+    question_ref,
+    student_response
+  )
+  select 
+    p_attempt_module_id,
+    (ans->>'reference_id')::uuid,
+    ans->>'question_ref',
+    ans->>'student_response'
+  from jsonb_array_elements(p_answers) as ans
+  on conflict (attempt_module_id, reference_id, question_ref)
+  do update set
+    student_response = excluded.student_response;
+  
+  get diagnostics v_inserted = row_count;
+  return v_inserted;
+end;
+$function$;
+
+-- Function: Validate per module access
+CREATE OR REPLACE FUNCTION public.validate_per_module_access(p_attempt_id uuid, p_module_type text, p_student_email text)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+  v_student_id UUID;
+  v_attempt_module RECORD;
+  v_result JSON;
+BEGIN
+  SELECT student_id INTO v_student_id
+  FROM student_profiles
+  WHERE email = p_student_email AND status = 'active';
+  
+  IF v_student_id IS NULL THEN
+    RETURN json_build_object(
+      'allowed', false,
+      'error', 'Student profile not found',
+      'error_code', 'STUDENT_NOT_FOUND'
+    );
+  END IF;
+  
+  IF NOT EXISTS(
+    SELECT 1 FROM mock_attempts 
+    WHERE id = p_attempt_id AND student_id = v_student_id
+  ) THEN
+    RETURN json_build_object(
+      'allowed', false,
+      'error', 'Access denied to this attempt',
+      'error_code', 'UNAUTHORIZED'
+    );
+  END IF;
+  
+  SELECT 
+    am.id,
+    am.module_id,
+    am.status,
+    am.started_at,
+    am.completed_at,
+    am.time_remaining_seconds
+  INTO v_attempt_module
+  FROM attempt_modules am
+  WHERE am.attempt_id = p_attempt_id 
+  AND am.module_type = p_module_type;
+  
+  IF v_attempt_module IS NULL THEN
+    RETURN json_build_object(
+      'allowed', false,
+      'error', 'Module not found for this attempt',
+      'error_code', 'MODULE_NOT_FOUND'
+    );
+  END IF;
+  
+  IF v_attempt_module.status = 'completed' THEN
+    RETURN json_build_object(
+      'allowed', false,
+      'error', 'This module has already been completed',
+      'error_code', 'MODULE_COMPLETED',
+      'module_status', v_attempt_module.status,
+      'completed_at', v_attempt_module.completed_at
+    );
+  END IF;
+  
+  RETURN json_build_object(
+    'allowed', true,
+    'attempt_module_id', v_attempt_module.id,
+    'module_status', v_attempt_module.status,
+    'started_at', v_attempt_module.started_at,
+    'time_remaining_seconds', COALESCE(v_attempt_module.time_remaining_seconds, 0)
+  );
+END;
+$function$;
+
+-- Function: Validate test access
+CREATE OR REPLACE FUNCTION public.validate_test_access(p_user_email text, p_scheduled_test_id uuid)
+RETURNS TABLE(has_access boolean, center_name text, test_title text, scheduled_at timestamp with time zone, duration_minutes integer, status text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    (EXISTS (
+        SELECT 1 
+        FROM student_profiles sp 
+        WHERE sp.email = p_user_email 
+        AND sp.center_id = st.center_id
+    )) as has_access,
+    c.name as center_name,
+    st.title as test_title,
+    st.scheduled_at,
+    st.duration_minutes,
+    st.status
+  FROM scheduled_tests st
+  JOIN centers c ON c.center_id = st.center_id
+  WHERE st.id = p_scheduled_test_id;
+END;
+$function$;
+
+-- Function: Verify and join center
+CREATE OR REPLACE FUNCTION public.verify_and_join_center(p_passcode_hash text)
+RETURNS json
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_user_id  uuid;
+  v_email    text;
+  v_code     exchange_codes%ROWTYPE;
+  v_slug     text;
+BEGIN
+  v_user_id := auth.uid();
+  IF v_user_id IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'Not authenticated');
+  END IF;
+
+  SELECT email INTO v_email FROM auth.users WHERE id = v_user_id;
+
+  SELECT * INTO v_code
+  FROM exchange_codes
+  WHERE email        = v_email
+    AND passcode_hash = p_passcode_hash
+    AND expires_at   > now()
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RETURN json_build_object('success', false, 'error', 'Invalid or expired passcode');
+  END IF;
+
+  INSERT INTO public.users (user_id, email, full_name, role, is_active)
+  VALUES (
+    v_user_id,
+    v_email,
+    coalesce((SELECT full_name FROM public.users WHERE user_id = v_user_id), split_part(v_email, '@', 1)),
+    v_code.role::public.user_role_enum,
+    true
+  )
+  ON CONFLICT (user_id) DO UPDATE SET
+    role      = EXCLUDED.role,
+    is_active = true;
+
+  INSERT INTO center_members (center_id, user_id, code_hash)
+  VALUES (v_code.center_id, v_user_id, p_passcode_hash)
+  ON CONFLICT (center_id, user_id) DO NOTHING;
+
+  DELETE FROM exchange_codes WHERE id = v_code.id;
+
+  SELECT slug INTO v_slug FROM centers WHERE center_id = v_code.center_id;
+
+  RETURN json_build_object('success', true, 'center_slug', v_slug);
+END;
+$function$;
+
+-- Function: Verify student attempt access
+CREATE OR REPLACE FUNCTION public.verify_student_attempt_access(p_student_id uuid, p_mock_attempt_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_has_access BOOLEAN;
+BEGIN
+  SELECT EXISTS (
+    SELECT 1
+    FROM mock_attempts ma
+    INNER JOIN student_profiles sp ON ma.student_id = sp.student_id
+    WHERE ma.id = p_mock_attempt_id
+      AND ma.student_id = p_student_id
+      AND sp.status = 'active'
+  ) INTO v_has_access;
+
+  RETURN v_has_access;
 END;
 $function$;
 

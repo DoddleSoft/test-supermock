@@ -32,7 +32,7 @@ export interface UserProfile {
   user_id: string;
   email: string;
   role: "student" | "examiner" | "admin";
-  full_name: string;
+  name: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
