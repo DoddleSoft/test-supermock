@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Mail, Lock, User, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import { Turnstile, TurnstileInstance } from "@marsidev/react-turnstile";
 
 export function RegisterForm() {
   const router = useRouter();
@@ -14,6 +15,8 @@ export function RegisterForm() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [captchaToken, setCaptchaToken] = useState<string>("");
+  const turnstileRef = useRef<TurnstileInstance>(null);
 
   const [formData, setFormData] = useState({
     fullName: "",
@@ -92,6 +95,14 @@ export function RegisterForm() {
       return;
     }
 
+    // Validate captcha token
+    if (!captchaToken) {
+      const msg = "Please complete the captcha verification.";
+      toast.error(msg);
+      setError(msg);
+      return;
+    }
+
     setIsLoading(true);
 
     try {
@@ -100,6 +111,8 @@ export function RegisterForm() {
         formData.email,
         formData.password,
         formData.fullName.trim(),
+        undefined,
+        captchaToken,
       );
 
       if (!result.success) {
@@ -262,6 +275,30 @@ export function RegisterForm() {
                   )}
                 </button>
               </div>
+            </div>
+
+            {/* Turnstile Captcha */}
+            <div className="flex justify-center">
+              <Turnstile
+                ref={turnstileRef}
+                siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+                onSuccess={(token) => {
+                  setCaptchaToken(token);
+                  setError("");
+                }}
+                onError={() => {
+                  setCaptchaToken("");
+                  setError("Captcha verification failed. Please try again.");
+                }}
+                onExpire={() => {
+                  setCaptchaToken("");
+                  setError("Captcha expired. Please verify again.");
+                }}
+                options={{
+                  theme: "light",
+                  size: "normal",
+                }}
+              />
             </div>
 
             {/* Submit Button */}

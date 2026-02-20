@@ -12,11 +12,13 @@ export interface RegisterData {
   password: string;
   fullName: string;
   role?: "regular" | "admin" | "owner" | "examiner";
+  captchaToken?: string;
 }
 
 export interface LoginData {
   email: string;
   password: string;
+  captchaToken?: string;
 }
 
 export interface AuthResponse {
@@ -140,16 +142,21 @@ class AuthService {
   async register(data: RegisterData): Promise<AuthResponse> {
     try {
       // Attempt to sign up with Supabase Auth
+      const siteUrl =
+        process.env.NEXT_PUBLIC_SITE_URL ??
+        (typeof window !== "undefined" ? window.location.origin : "");
+
       const { data: authData, error: authError } =
         await this.supabase.auth.signUp({
           email: data.email,
           password: data.password,
           options: {
-            emailRedirectTo: `${window.location.origin}/auth/callback`,
+            emailRedirectTo: `${siteUrl}/auth/callback`,
             data: {
               full_name: data.fullName,
               role: data.role || "regular",
             },
+            captchaToken: data.captchaToken,
           },
         });
 
@@ -262,6 +269,9 @@ class AuthService {
         await this.supabase.auth.signInWithPassword({
           email: data.email,
           password: data.password,
+          options: {
+            captchaToken: data.captchaToken,
+          },
         });
 
       if (error) {
@@ -520,51 +530,15 @@ class AuthService {
   }
 
   /**
-   * Sign in with Google OAuth
-   */
-  async signInWithGoogle(
-    redirectPath: string = "/dashboard",
-  ): Promise<AuthResponse> {
-    try {
-      const origin = window.location.origin;
-      const callbackUrl = `${origin}/auth/callback`;
-
-      // Always use redirect mode to avoid COOP issues
-      const { error } = await this.supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: callbackUrl,
-          queryParams: {
-            access_type: "offline",
-            prompt: "consent",
-          },
-          scopes: "openid profile email",
-        },
-      });
-
-      if (error) {
-        return { success: false, error: error.message };
-      }
-
-      return { success: true };
-    } catch (error) {
-      return {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to initiate Google sign-in. Please try again.",
-      };
-    }
-  }
-
-  /**
    * Reset password
    */
   async resetPassword(email: string): Promise<AuthResponse> {
     try {
+      const siteUrl =
+        process.env.NEXT_PUBLIC_SITE_URL ??
+        (typeof window !== "undefined" ? window.location.origin : "");
       const { error } = await this.supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth/reset-password`,
+        redirectTo: `${siteUrl}/auth/reset-password`,
       });
 
       if (error) {
@@ -890,9 +864,6 @@ export const signUpWithEmail = (
   password: string,
   fullName: string,
 ) => authService.register({ email, password, fullName });
-
-export const signInWithGoogle = (redirectPath?: string) =>
-  authService.signInWithGoogle(redirectPath);
 
 export const resetPassword = (email: string) =>
   authService.resetPassword(email);

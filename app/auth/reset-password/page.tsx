@@ -67,18 +67,6 @@ export default function ResetPasswordPage() {
       return false;
     }
 
-    // Check password strength
-    const hasUpperCase = /[A-Z]/.test(formData.newPassword);
-    const hasLowerCase = /[a-z]/.test(formData.newPassword);
-    const hasNumber = /[0-9]/.test(formData.newPassword);
-
-    if (!hasUpperCase || !hasLowerCase || !hasNumber) {
-      toast.error(
-        "New password must contain at least one uppercase letter, one lowercase letter, and one number.",
-      );
-      return false;
-    }
-
     // 5. Check if new password is different from current
     if (formData.currentPassword === formData.newPassword) {
       toast.error("New password must be different from current password.");
@@ -127,8 +115,6 @@ export default function ResetPasswordPage() {
 
       // Step 3: Sign out after successful password change
       await supabase.auth.signOut();
-
-      toast.success("Password updated successfully! Redirecting to login...");
 
       // Clear form
       setFormData({

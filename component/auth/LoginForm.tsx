@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Mail, Lock, Eye, EyeOff } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { authService } from "@/helpers/auth";
 import { toast } from "sonner";
+import { Turnstile, TurnstileInstance } from "@marsidev/react-turnstile";
 
 export function LoginForm() {
   const router = useRouter();
@@ -16,6 +17,8 @@ export function LoginForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const turnstileRef = useRef<TurnstileInstance>(null);
 
   const [formData, setFormData] = useState({
     email: "",
@@ -130,9 +133,22 @@ export function LoginForm() {
       return;
     }
 
+    // Validate captcha token
+    if (!captchaToken) {
+      const msg = "Please complete the captcha verification.";
+      toast.error(msg);
+      setError(msg);
+      setIsLoading(false);
+      return;
+    }
+
     try {
       // Step 1: Validate credentials with Supabase Auth
-      const result = await signIn(formData.email, formData.password);
+      const result = await signIn(
+        formData.email,
+        formData.password,
+        captchaToken,
+      );
 
       if (!result.success) {
         const errorMsg =
@@ -325,6 +341,16 @@ export function LoginForm() {
                 Remember me
               </label>
             </div>
+
+            {/* Turnstile Captcha */}
+
+            <Turnstile
+              ref={turnstileRef}
+              siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+              onSuccess={(token) => setCaptchaToken(token)}
+              onExpire={() => setCaptchaToken(null)}
+              onError={() => setCaptchaToken(null)}
+            />
 
             {/* Submit Button */}
             <button
