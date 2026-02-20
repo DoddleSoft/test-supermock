@@ -15,7 +15,7 @@ export function RegisterForm() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [captchaToken, setCaptchaToken] = useState<string>("");
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const turnstileRef = useRef<TurnstileInstance>(null);
 
   const [formData, setFormData] = useState({
@@ -278,28 +278,14 @@ export function RegisterForm() {
             </div>
 
             {/* Turnstile Captcha */}
-            <div className="flex justify-center">
-              <Turnstile
-                ref={turnstileRef}
-                siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
-                onSuccess={(token) => {
-                  setCaptchaToken(token);
-                  setError("");
-                }}
-                onError={() => {
-                  setCaptchaToken("");
-                  setError("Captcha verification failed. Please try again.");
-                }}
-                onExpire={() => {
-                  setCaptchaToken("");
-                  setError("Captcha expired. Please verify again.");
-                }}
-                options={{
-                  theme: "light",
-                  size: "normal",
-                }}
-              />
-            </div>
+
+            <Turnstile
+              ref={turnstileRef}
+              siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+              onSuccess={(token) => setCaptchaToken(token)}
+              onExpire={() => setCaptchaToken(null)}
+              onError={() => setCaptchaToken(null)}
+            />
 
             {/* Submit Button */}
             <button
