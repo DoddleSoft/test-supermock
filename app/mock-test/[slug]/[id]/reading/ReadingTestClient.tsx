@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useExam } from "@/context/ExamContext";
 import { toast } from "sonner";
+import { AlertTriangle } from "lucide-react";
 import RenderBlock from "@/component/modules/RenderBlock";
 import { Loader } from "@/component/ui/loader";
 import ReadingNavbar from "@/component/modules/ReadingNavbar";
@@ -213,9 +214,17 @@ export default function ReadingTestClient({
   }, [currentAttemptModule, attemptId]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
 
-  // Handle submit - matches listening module logic
+  // Show confirmation dialog before submit
+  const handleSubmitClick = () => {
+    setShowConfirmDialog(true);
+  };
+
+  // Handle confirmed submit
   const handleSubmit = async () => {
+    setShowConfirmDialog(false);
+
     if (!currentAttemptModule?.id) {
       toast.error("No active module to submit");
       return;
@@ -228,22 +237,17 @@ export default function ReadingTestClient({
       await syncStoredAnswersToDatabase(attemptId, currentAttemptModule.id);
     }
 
-    toast.promise(submitModule(), {
-      loading: "Submitting your answers...",
-      success: (result) => {
-        if (result.success) {
-          setTimeout(() => {
-            router.push(`/mock-test/${centerSlug}/${attemptId}`);
-          }, 1500);
-          return `Module submitted successfully!`;
-        }
-        return "Submission completed";
-      },
-      error: (err) => {
-        setIsSubmitting(false);
-        return `Submission failed: ${err}`;
-      },
-    });
+    try {
+      const result = await submitModule();
+      if (result.success) {
+        setTimeout(() => {
+          router.push(`/mock-test/${centerSlug}/${attemptId}`);
+        }, 1500);
+      }
+    } catch (err) {
+      setIsSubmitting(false);
+      toast.error("Submission failed. Please try again.");
+    }
   };
 
   if (isLoading || !currentModule) {
@@ -272,7 +276,7 @@ export default function ReadingTestClient({
             ? `${sectionQuestions[0].question_ref}-${sectionQuestions[sectionQuestions.length - 1].question_ref}`
             : undefined
         }
-        onSubmit={handleSubmit}
+        onSubmit={handleSubmitClick}
         isSubmitting={isSubmitting}
       />
 
@@ -410,6 +414,44 @@ export default function ReadingTestClient({
           </div>
         </div>
       </div>
+
+      {/* Confirmation Dialog */}
+      {showConfirmDialog && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-start gap-4">
+              <div className="flex-shrink-0">
+                <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                  <AlertTriangle className="w-6 h-6 text-red-600" />
+                </div>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  Submit Module
+                </h3>
+                <p className="text-sm text-gray-600 mb-6">
+                  Are you sure you want to submit your answers? This action
+                  cannot be undone.
+                </p>
+                <div className="flex gap-3 justify-end">
+                  <button
+                    onClick={() => setShowConfirmDialog(false)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSubmit}
+                    className="px-4 py-2 bg-red-600 rounded-lg text-sm font-medium text-white hover:bg-red-700 transition-colors"
+                  >
+                    Yes, Submit
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSubmitDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-6">

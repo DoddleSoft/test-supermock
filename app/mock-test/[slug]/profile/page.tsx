@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import Navbar from "@/component/landing/Navbar";
 import OverallScoreCard from "@/component/profile/OverallScoreCard";
+import TestFeedbackCard from "@/component/profile/TestFeedbackCard";
 import { formatProfileDate } from "@/helpers/scheduledTests";
 
 interface ProfilePageProps {
@@ -138,6 +139,19 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
 
   const latestTest = tests[0];
 
+  // IELTS rounding: round to nearest 0.5 (with .25 rounding up to .5, .75 rounding up to next whole)
+  const ieltsRound = (score: number) => Math.round(score * 2) / 2;
+
+  // Calculate overall score client-side: (L + R + W) / 3 with IELTS rounding
+  const computedOverallScore = latestTest
+    ? ieltsRound(
+        (latestTest.modules.listening +
+          latestTest.modules.reading +
+          latestTest.modules.writing) /
+          3,
+      )
+    : 0;
+
   // Prepare module scores for latest test
   const moduleScores = latestTest
     ? latestTest.modules
@@ -148,17 +162,25 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
         speaking: 0,
       };
 
-  // Prepare chart data - reverse to show oldest to newest
+  // Prepare chart data - show all tests (oldest to newest)
   const chartData =
     tests.length > 0
-      ? tests.reverse().map((test) => ({
-          label: `T${test.test_number}`,
-          testTitle: test.test_title,
-          listening: test.modules.listening || 0,
-          reading: test.modules.reading || 0,
-          writing: test.modules.writing || 0,
-          overall: test.overall_score || 0,
-        }))
+      ? tests
+          .slice()
+          .reverse()
+          .map((test) => ({
+            label: `T${test.test_number}`,
+            testTitle: test.test_title,
+            listening: test.modules.listening || 0,
+            reading: test.modules.reading || 0,
+            writing: test.modules.writing || 0,
+            overall: ieltsRound(
+              (test.modules.listening +
+                test.modules.reading +
+                test.modules.writing) /
+                3,
+            ),
+          }))
       : [];
 
   const minScore = 5;
@@ -210,7 +232,7 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
             <div className="lg:col-span-5">
               <OverallScoreCard
-                overallScore={latestTest?.overall_score || 0}
+                overallScore={computedOverallScore}
                 testDate={
                   latestTest
                     ? formatProfileDate(latestTest.completed_at)
@@ -228,7 +250,8 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
             <div className="lg:col-span-7">
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
                 <h2 className="text-lg font-semibold text-gray-800 mb-4">
-                  Scores for the last {chartData.length} tests
+                  Scores for the last {chartData.length} test
+                  {chartData.length !== 1 ? "s" : ""}
                 </h2>
 
                 {/* Legend */}
@@ -360,119 +383,59 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
           </div>
 
           {/* Module Feedback Section */}
-          {Object.keys(feedbackByAttempt).length > 0 && (
+          {tests.length > 0 && (
             <div className="mt-12">
               <h2 className="text-2xl font-bold text-gray-900 mb-6">
                 Module Feedback & Performance
               </h2>
 
               <div className="space-y-6">
-                {Object.entries(feedbackByAttempt).map(
-                  ([attemptId, attempt]) => (
-                    <div
-                      key={attemptId}
-                      className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden"
-                    >
-                      {/* Test Header */}
-                      <div className="bg-gradient-to-r from-red-50 to-red-100 px-6 py-4 border-b border-red-200">
-                        <h3 className="text-lg font-semibold text-gray-900">
-                          {attempt.test_title}
-                        </h3>
-                        <p className="text-sm text-gray-600 mt-1">
-                          Completed on{" "}
-                          {formatProfileDate(attempt.test_completed_at)}
-                        </p>
-                      </div>
+                {tests.map((test) => {
+                  // Find feedback for this attempt from the feedback RPC
+                  const attemptFeedback = feedbackByAttempt[test.attempt_id];
+                  const feedbackModules = attemptFeedback?.modules || [];
 
-                      {/* Modules Grid */}
-                      <div className="p-6 space-y-6">
-                        {attempt.modules.map((module, idx) => (
-                          <div
-                            key={idx}
-                            className="border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow"
-                          >
-                            {/* Module Header */}
-                            <div className="flex items-start justify-between mb-4">
-                              <div className="flex items-center gap-3">
-                                <span
-                                  className={`px-3 py-1 rounded-full text-sm font-semibold border ${getModuleColor(module.module_type)}`}
-                                >
-                                  {getModuleName(module.module_type)}
-                                </span>
-                                <div className="text-2xl font-bold text-gray-900">
-                                  {module.band_score.toFixed(1)}
-                                  <span className="text-sm text-gray-500 font-normal ml-1">
-                                    / 9.0
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
+                  // Build module entries from test scores, supplemented with feedback
+                  const moduleEntries = (
+                    ["listening", "reading", "writing"] as const
+                  )
+                    .filter((type) => test.modules[type] > 0)
+                    .map((type) => {
+                      const fb = feedbackModules.find(
+                        (m) => m.module_type === type,
+                      );
+                      return {
+                        module_type: type,
+                        band_score: test.modules[type],
+                        score_obtained:
+                          fb?.score_obtained ?? test.modules[type],
+                        time_spent_seconds: fb?.time_spent_seconds ?? 0,
+                        module_duration_minutes:
+                          fb?.module_duration_minutes ?? 0,
+                        feedback: fb?.feedback ?? null,
+                      };
+                    });
 
-                            {/* Stats Row */}
-                            <div className="grid grid-cols-3 gap-4 mb-4">
-                              <div className="bg-gray-50 rounded-lg p-3">
-                                <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">
-                                  Band Score
-                                </p>
-                                <p className="text-lg font-bold text-gray-900">
-                                  {module.band_score.toFixed(1)}
-                                </p>
-                              </div>
-                              <div className="bg-gray-50 rounded-lg p-3">
-                                <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">
-                                  Time Taken
-                                </p>
-                                <p className="text-lg font-bold text-gray-900">
-                                  {formatTime(module.time_spent_seconds)}
-                                </p>
-                                <p className="text-xs text-gray-500 mt-0.5">
-                                  of {module.module_duration_minutes} min
-                                </p>
-                              </div>
-                              <div className="bg-gray-50 rounded-lg p-3">
-                                <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">
-                                  Score
-                                </p>
-                                <p className="text-lg font-bold text-gray-900">
-                                  {module.score_obtained.toFixed(1)}
-                                </p>
-                              </div>
-                            </div>
+                  if (moduleEntries.length === 0) return null;
 
-                            {/* Feedback */}
-                            {module.feedback && (
-                              <div className="bg-blue-50 border-l-4 border-blue-500 rounded-r-lg p-4">
-                                <div className="flex items-start gap-3">
-                                  <div className="flex-shrink-0">
-                                    <svg
-                                      className="w-5 h-5 text-blue-600 mt-0.5"
-                                      fill="currentColor"
-                                      viewBox="0 0 20 20"
-                                    >
-                                      <path
-                                        fillRule="evenodd"
-                                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                                        clipRule="evenodd"
-                                      />
-                                    </svg>
-                                  </div>
-                                  <div>
-                                    <p className="text-xs font-semibold text-blue-900 uppercase tracking-wide mb-1">
-                                      Feedback
-                                    </p>
-                                    <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
-                                      {module.feedback}
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ),
-                )}
+                  // Calculate overall for this test
+                  const testOverall = ieltsRound(
+                    (test.modules.listening +
+                      test.modules.reading +
+                      test.modules.writing) /
+                      3,
+                  );
+
+                  return (
+                    <TestFeedbackCard
+                      key={test.attempt_id}
+                      testTitle={test.test_title}
+                      completedAt={formatProfileDate(test.completed_at)}
+                      testOverall={testOverall}
+                      moduleEntries={moduleEntries}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}
