@@ -12,6 +12,7 @@ import {
   updateAnswerInStorage,
 } from "@/utils/answerStorage";
 import { syncStoredAnswersToDatabase } from "@/helpers/answerSync";
+import { buildBlocks, buildPassageBlocks } from "@/helpers/contentBlocks";
 
 interface ReadingTestClientProps {
   attemptId: string;
@@ -249,49 +250,6 @@ export default function ReadingTestClient({
         return `Submission failed: ${err}`;
       },
     });
-  };
-
-  const buildBlocks = (
-    template?: string | null,
-    subType?: string | null,
-    instruction?: string | null,
-  ) => {
-    const blocks: Array<{ type: string; content?: string }> = [];
-
-    // Add instruction as first block if it exists
-    if (instruction) {
-      blocks.push({ type: "instruction", content: instruction });
-    }
-
-    if (!template) return blocks;
-
-    try {
-      const parsed = JSON.parse(template);
-      if (Array.isArray(parsed)) return [...blocks, ...parsed];
-      if (parsed?.type) return [...blocks, parsed];
-    } catch {
-      // fall through
-    }
-    const allowed = new Set([
-      "header",
-      "instruction",
-      "title",
-      "subtitle",
-      "box",
-      "text",
-      "image",
-    ]);
-    const type = subType && allowed.has(subType) ? subType : "text";
-    blocks.push({ type, content: template });
-    return blocks;
-  };
-
-  const buildPassageBlocks = (content?: string | null) => {
-    if (!content) return [] as Array<{ type: string; content?: string }>;
-    const normalized = content.includes("<")
-      ? content
-      : content.replace(/\n/g, "<br />");
-    return [{ type: "html", content: normalized }];
   };
 
   if (isLoading || !currentModule) {

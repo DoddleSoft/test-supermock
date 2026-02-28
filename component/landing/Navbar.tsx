@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Menu, X, LogOut } from "lucide-react";
+import { Menu, X, LogOut, User } from "lucide-react";
 import Image from "next/image";
 import { useAuth } from "@/context/AuthContext";
 import { authService } from "@/helpers/auth";
@@ -18,12 +17,11 @@ export default function Navbar({
   hideInstructions = false,
   disableProfileLink = false,
 }: NavbarProps) {
-  const router = useRouter();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [centerSlug, setCenterSlug] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const { user, userProfile, studentName, signOut, loading } = useAuth();
+  const { user, userProfile, studentName, signOut } = useAuth();
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // Check authentication and get center slug on mount
   useEffect(() => {
@@ -50,42 +48,16 @@ export default function Navbar({
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  const handleStartTest = async () => {
-    if (!user) {
-      router.push("/auth/login");
-      return;
-    }
-
-    if (!centerSlug) {
-      toast.error(
-        "Unable to determine your test center. Please contact support.",
-      );
-      return;
-    }
-
-    setIsLoading(true);
-    router.push(`/mock-test/${centerSlug}/exchange-code`);
-  };
-
-  const handleSmoothScroll = (
-    e: React.MouseEvent<HTMLAnchorElement>,
-    id: string,
-  ) => {
-    e.preventDefault(); // Prevent instant jump
-    const element = document.getElementById(id);
-    if (element) {
-      // Offset for the fixed header height (approx 80px)
-      const headerOffset = 80;
-      const elementPosition = element.getBoundingClientRect().top;
-      const offsetPosition = elementPosition + window.scrollY - headerOffset;
-
-      window.scrollTo({
-        top: offsetPosition,
-        behavior: "smooth",
-      });
-      setIsMobileMenuOpen(false);
-    }
-  };
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -140,61 +112,82 @@ export default function Navbar({
             </a>
           )}
 
-          {/* --- CTA & Mobile Toggle --- */}
-          <div className="flex items-center gap-2">
-            <div className="flex gap-2 justify-end">
-              {disableProfileLink ? (
-                <div className="flex items-center gap-3 pr-2 border-r border-red-400 border-r-2 rounded-lg px-3 py-2">
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-slate-900">
-                      {studentName ||
-                        userProfile?.name ||
-                        user?.email?.split("@")[0] ||
-                        "User"}
-                    </p>
-                    <p className="text-[12px] text-slate-500">
-                      {user?.email || "N/A"}
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <Link
-                  href={`/mock-test/${centerSlug}/profile`}
-                  className="flex items-center gap-3 pr-2 border-r border-red-400 border-r-2 hover:bg-red-50 cursor-pointer rounded-lg transition-colors px-3 py-2 group"
-                >
-                  <div className="text-right">
-                    <p className="text-sm font-medium text-slate-900 group-hover:text-red-600 transition-colors">
-                      {studentName ||
-                        userProfile?.name ||
-                        user?.email?.split("@")[0] ||
-                        "User"}
-                    </p>
-                    <p className="text-[12px] text-slate-500">
-                      {user?.email || "N/A"}
-                    </p>
-                  </div>
-                </Link>
-              )}
-
-              {/* Logout Button */}
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-2 px-4 text-sm font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                title="Logout"
-              >
-                <LogOut size={18} />
-                <span className="hidden md:inline">Logout</span>
-              </button>
-            </div>
-
-            {/* Mobile Toggle Button */}
+          {/* --- Hamburger Menu --- */}
+          <div className="relative" ref={menuRef}>
             <button
-              className="md:hidden p-2 text-slate-600 hover:text-slate-900 focus:outline-none hover:bg-slate-100 rounded-full transition-colors"
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+              className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border-2 transition-all duration-200 ${
+                isMenuOpen
+                  ? "bg-red-50 border-red-300 text-red-700"
+                  : "bg-white/60 border-gray-200 text-slate-700 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+              }`}
               aria-label="Toggle menu"
             >
-              {isMobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
+              {/* User initials avatar */}
+              <span className="flex items-center justify-center w-7 h-7 rounded-full bg-red-100 text-red-700 text-xs font-bold shrink-0">
+                {(studentName || userProfile?.name || user?.email || "U")
+                  .charAt(0)
+                  .toUpperCase()}
+              </span>
+              {/* Name – hidden on very small screens */}
+              <span className="hidden sm:block text-sm font-semibold max-w-[120px] truncate">
+                {studentName ||
+                  userProfile?.name ||
+                  user?.email?.split("@")[0] ||
+                  "User"}
+              </span>
+              {isMenuOpen ? <X size={18} /> : <Menu size={18} />}
             </button>
+
+            {/* Dropdown */}
+            {isMenuOpen && (
+              <div className="absolute right-0 mt-2 p-2 w-60 rounded-lg border border-gray-100 bg-white shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-150">
+                {/* User info header */}
+                <div className="px-4 py-3 border-b rounded-md border-gray-100 bg-gray-50">
+                  <p className="text-sm font-semibold text-slate-900 truncate">
+                    {studentName ||
+                      userProfile?.name ||
+                      user?.email?.split("@")[0] ||
+                      "User"}
+                  </p>
+                  <p className="text-xs text-slate-500 truncate">
+                    {user?.email || ""}
+                  </p>
+                </div>
+
+                {/* Profile link */}
+                {!disableProfileLink && centerSlug ? (
+                  <Link
+                    href={`/mock-test/${centerSlug}/profile`}
+                    onClick={() => setIsMenuOpen(false)}
+                    className="flex items-center gap-3 px-4 py-3 text-sm text-slate-700 hover:bg-red-50 hover:text-red-700 rounded-md transition-colors"
+                  >
+                    <User size={16} className="shrink-0" />
+                    <span className="font-medium">Profile</span>
+                  </Link>
+                ) : (
+                  <div className="flex items-center gap-3 px-4 py-3 text-sm text-slate-400 cursor-not-allowed rounded-md">
+                    <User size={16} className="shrink-0" />
+                    <span className="font-medium">Profile</span>
+                  </div>
+                )}
+
+                {/* Divider */}
+                <div className="border-t border-gray-100" />
+
+                {/* Logout */}
+                <button
+                  onClick={() => {
+                    setIsMenuOpen(false);
+                    handleLogout();
+                  }}
+                  className="flex w-full items-center gap-3 px-4 py-3 rounded-md text-sm text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  <LogOut size={16} className="shrink-0" />
+                  <span className="font-medium">Logout</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import Navbar from "@/component/landing/Navbar";
 import OverallScoreCard from "@/component/profile/OverallScoreCard";
+import { formatProfileDate } from "@/helpers/scheduledTests";
 
 interface ProfilePageProps {
   params: Promise<{ slug: string }>;
@@ -102,17 +103,6 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
   const minScore = 5;
   const maxScore = 9;
 
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return "N/A";
-    return new Date(dateString)
-      .toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "2-digit",
-      })
-      .toUpperCase();
-  };
-
   return (
     <div className="min-h-screen bg-gray-50 pt-10">
       {/* Navbar */}
@@ -127,7 +117,9 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
               <OverallScoreCard
                 overallScore={latestTest?.overall_score || 0}
                 testDate={
-                  latestTest ? formatDate(latestTest.completed_at) : "N/A"
+                  latestTest
+                    ? formatProfileDate(latestTest.completed_at)
+                    : "N/A"
                 }
                 testName={latestTest?.test_title || "IELTS MOCK TEST"}
                 listening={moduleScores.listening || 0}

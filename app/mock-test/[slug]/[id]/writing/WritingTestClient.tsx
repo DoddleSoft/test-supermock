@@ -11,6 +11,7 @@ import {
   getModuleAnswersFromStorage,
 } from "@/utils/answerStorage";
 import { syncStoredAnswersToDatabase } from "@/helpers/answerSync";
+import { buildBlocks } from "@/helpers/contentBlocks";
 import Image from "next/image";
 
 interface WritingTestClientProps {
@@ -123,49 +124,6 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
     }, 5000);
     return () => clearInterval(interval);
   }, []);
-
-  const buildBlocks = (
-    template?: string | null,
-    subType?: string | null,
-    instruction?: string | null,
-  ) => {
-    const blocks: Array<{ type: string; content?: string }> = [];
-
-    // Add instruction as first block if it exists
-    if (instruction) {
-      blocks.push({ type: "instruction", content: instruction });
-    }
-
-    if (!template) return blocks;
-
-    try {
-      const parsed = JSON.parse(template);
-      if (Array.isArray(parsed)) return [...blocks, ...parsed];
-      if (parsed?.type) return [...blocks, parsed];
-    } catch {
-      // fall through
-    }
-    const allowed = new Set([
-      "header",
-      "instruction",
-      "title",
-      "subtitle",
-      "box",
-      "text",
-      "image",
-    ]);
-    if (
-      template.startsWith("http") &&
-      (template.includes("/image/") ||
-        template.match(/\.(jpg|jpeg|png|gif|webp)$/i))
-    ) {
-      blocks.push({ type: "image", content: template });
-      return blocks;
-    }
-    const type = subType && allowed.has(subType) ? subType : "text";
-    blocks.push({ type, content: template });
-    return blocks;
-  };
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 

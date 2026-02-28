@@ -22,6 +22,24 @@ export interface ScheduledTest {
   } | null;
 }
 
+export interface StudentRegisteredTest {
+  attempt_id: string;
+  attempt_status: string;
+  attempt_type: string;
+  scheduled_test_id: string;
+  test_title: string;
+  scheduled_at: string;
+  duration_minutes: number;
+  test_status: string;
+  paper_id: string;
+  paper_title: string;
+  paper_type: string;
+  center_id: string;
+  center_name: string;
+  center_slug: string;
+  started_at: string;
+}
+
 export interface TestStatus {
   status: "scheduled" | "in_progress" | "completed" | "cancelled";
   countdown?: string;
@@ -173,6 +191,36 @@ export async function fetchScheduledTests(
 }
 
 /**
+ * Fetch tests the student is registered for (has a mock_attempt that is not completed/evaluated).
+ * Uses the get_student_registered_tests RPC to join mock_attempts → papers → scheduled_tests → centers.
+ */
+export async function fetchStudentRegisteredTests(
+  studentEmail: string,
+): Promise<{ tests: StudentRegisteredTest[]; error?: string }> {
+  try {
+    const supabase = createClient();
+
+    const { data, error } = await supabase.rpc("get_student_registered_tests", {
+      p_student_email: studentEmail,
+    });
+
+    if (error) {
+      console.error("Error fetching student registered tests:", error);
+      return { tests: [], error: "Failed to fetch your registered tests" };
+    }
+
+    if (!data || data.length === 0) {
+      return { tests: [] };
+    }
+
+    return { tests: data as StudentRegisteredTest[] };
+  } catch (error) {
+    console.error("Error in fetchStudentRegisteredTests:", error);
+    return { tests: [], error: "An unexpected error occurred" };
+  }
+}
+
+/**
  * Format date for display
  */
 export function formatTestDate(dateString: string): string {
@@ -186,6 +234,20 @@ export function formatTestDate(dateString: string): string {
 }
 
 /**
+ * Format date for profile display (e.g. "01 FEB 26")
+ */
+export function formatProfileDate(dateString: string | null): string {
+  if (!dateString) return "N/A";
+  return new Date(dateString)
+    .toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "2-digit",
+    })
+    .toUpperCase();
+}
+
+/**
  * Format time for display
  */
 export function formatTestTime(dateString: string): string {
@@ -194,6 +256,50 @@ export function formatTestTime(dateString: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/**
+ * Convert a StudentRegisteredTest into a ScheduledTest shape
+ * so we can reuse the existing getTestStatus() logic.
+ */
+export function toScheduledTest(t: StudentRegisteredTest): ScheduledTest {
+  return {
+    id: t.scheduled_test_id,
+    center_id: t.center_id,
+    paper_id: t.paper_id,
+    title: t.test_title,
+    scheduled_at: t.scheduled_at,
+    duration_minutes: t.duration_minutes,
+    status: t.test_status as ScheduledTest["status"],
+    paper: {
+      id: t.paper_id,
+      title: t.paper_title,
+      paper_type: t.paper_type,
+    },
+    center: {
+      center_id: t.center_id,
+      name: t.center_name,
+      slug: t.center_slug,
+    },
+  };
+}
+
+/**
+ * Get Tailwind CSS classes for a test status badge.
+ */
+export function getStatusBadgeColor(
+  status: "scheduled" | "in_progress" | "completed" | "cancelled",
+): string {
+  switch (status) {
+    case "in_progress":
+      return "bg-red-400 text-red-900 border-red-400";
+    case "scheduled":
+      return "bg-red-100 text-red-700 border-red-200";
+    case "completed":
+      return "bg-green-100 text-green-700 border-green-200";
+    case "cancelled":
+      return "bg-gray-100 text-gray-600 border-gray-200";
+  }
 }
 
 /**
