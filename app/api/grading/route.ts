@@ -254,6 +254,53 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // -------------------------------------------------------
+    // 5.5 SERVER-SIDE TIME VALIDATION (anti-cheat)
+    // Compute deadline from server-set started_at + module duration.
+    // This prevents clients from manipulating time_remaining_seconds.
+    // -------------------------------------------------------
+    const MODULE_DURATIONS: Record<string, number> = {
+      listening: 30 * 60,
+      reading: 60 * 60,
+      writing: 60 * 60,
+      speaking: 15 * 60,
+    };
+
+    let serverTimeRemaining = timeRemainingSeconds ?? 0;
+
+    if (attemptModule.started_at && moduleType) {
+      const durationSec = MODULE_DURATIONS[moduleType] || 3600;
+      const deadlineMs =
+        new Date(attemptModule.started_at).getTime() + durationSec * 1000;
+      const serverRemaining = Math.max(
+        0,
+        Math.floor((deadlineMs - Date.now()) / 1000),
+      );
+      const GRACE_SECONDS = 60;
+
+      // Always trust server-computed time over client-reported time
+      serverTimeRemaining = serverRemaining;
+
+      if (Date.now() > deadlineMs + GRACE_SECONDS * 1000) {
+        const overrunSec = Math.round((Date.now() - deadlineMs) / 1000);
+        console.warn(
+          `[Grading] SECURITY: Late submission for module ${attemptModuleId} (${moduleType}). ` +
+            `${overrunSec}s past deadline. started_at=${attemptModule.started_at}`,
+        );
+      }
+
+      // Flag suspiciously high client-reported time remaining
+      if (
+        timeRemainingSeconds !== undefined &&
+        timeRemainingSeconds > serverRemaining + 30
+      ) {
+        console.warn(
+          `[Grading] SECURITY: Client time remaining (${timeRemainingSeconds}s) exceeds ` +
+            `server computed (${serverRemaining}s) by ${timeRemainingSeconds - serverRemaining}s`,
+        );
+      }
+    }
+
+    // -------------------------------------------------------
     // 6. SAVE ANSWERS (atomic RPC upsert - single round trip)
     // -------------------------------------------------------
     if (answers && answers.length > 0) {
@@ -316,7 +363,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           status: "completed",
           completed_at: new Date().toISOString(),
           time_spent_seconds: finalTimeSpent,
-          time_remaining_seconds: timeRemainingSeconds ?? 0,
+          time_remaining_seconds: serverTimeRemaining,
         })
         .eq("id", attemptModuleId)
         .eq("status", attemptModule.status); // Optimistic lock
@@ -510,7 +557,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         p_total_score: totalScore,
         p_band_score: bandScore,
         p_time_spent: finalTimeSpent,
-        p_time_remaining: timeRemainingSeconds ?? 0,
+        p_time_remaining: serverTimeRemaining,
         p_status: "completed",
         p_answers: answerUpdates.map((upd) => ({
           answer_id: upd.id,

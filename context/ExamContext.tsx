@@ -107,6 +107,7 @@ interface ExamState {
   // Timer
   timeLeft: number;
   isTimerRunning: boolean;
+  moduleDeadline: number | null;
 
   // Computed
   totalQuestions: number;
@@ -293,6 +294,7 @@ export function ExamProvider({
         submitDialogMessage: null,
         timeLeft: 0,
         isTimerRunning: false,
+        moduleDeadline: null,
         totalQuestions: 0,
         answeredQuestions: 0,
         flaggedQuestions: [],
@@ -322,6 +324,7 @@ export function ExamProvider({
       submitDialogMessage: null,
       timeLeft: 0,
       isTimerRunning: false,
+      moduleDeadline: null,
       totalQuestions: 0,
       answeredQuestions: 0,
       flaggedQuestions: [],
@@ -333,6 +336,9 @@ export function ExamProvider({
   const loadExamInFlight = useRef(false);
   const loadExamAttemptsRef = useRef<Record<string, number>>({});
   const loadedModulesRef = useRef<Set<string>>(new Set());
+  const autoSubmitFiredRef = useRef(false);
+  const deadlineRef = useRef<number>(0);
+  const tickCountRef = useRef(0);
   const supabase = createClient();
 
   const wait = (ms: number) =>
@@ -636,6 +642,11 @@ export function ExamProvider({
           isLoading: false,
           isTimerRunning: false,
           answers: new Map(),
+          ...(autoSubmit && {
+            showSubmitDialog: true,
+            submitDialogMessage:
+              "Time's up! Your answers have been submitted automatically.",
+          }),
         }));
 
         return result;
@@ -665,59 +676,90 @@ export function ExamProvider({
   );
 
   // Timer logic with database sync
+  // Timer logic — deadline-based (drift-free, tamper-resistant)
+  // The timer computes remaining from server-set deadline rather than
+  // client-side decrement, so tab sleep / DevTools can't extend time.
   useEffect(() => {
-    if (state.isTimerRunning && state.timeLeft > 0) {
-      let tickCount = 0;
-      const SYNC_INTERVAL = 30; // Sync to DB every 30 seconds to reduce load
+    if (!state.isTimerRunning || !state.moduleDeadline) return;
 
-      timerRef.current = setInterval(() => {
-        setState((prev) => {
-          const newTime = prev.timeLeft - 1;
-          tickCount++;
+    // Keep ref in sync for use inside interval closure
+    deadlineRef.current = state.moduleDeadline;
+    tickCountRef.current = 0;
+    const DB_SYNC_INTERVAL = 30; // Sync time to DB every 30 seconds
+    const attemptModuleId = state.currentAttemptModule?.id;
 
-          // Sync to database every SYNC_INTERVAL seconds
-          if (tickCount >= SYNC_INTERVAL && prev.currentAttemptModule?.id) {
-            tickCount = 0;
-            // Async update without blocking
-            supabase
-              .from("attempt_modules")
-              .update({
-                time_remaining_seconds: newTime,
-                time_spent_seconds:
-                  (prev.currentAttemptModule.time_spent_seconds || 0) +
-                  SYNC_INTERVAL,
-              })
-              .eq("id", prev.currentAttemptModule.id)
-              .then(({ error }) => {
-                if (error) console.error("Timer sync error:", error);
-              });
-          }
+    timerRef.current = setInterval(() => {
+      const now = Date.now();
+      const remaining = Math.max(
+        0,
+        Math.floor((deadlineRef.current - now) / 1000),
+      );
 
-          if (newTime <= 0) {
-            // Auto-submit when timer expires
-            submitModule(true);
-            return { ...prev, timeLeft: 0, isTimerRunning: false };
-          }
-          return { ...prev, timeLeft: newTime };
-        });
-      }, 1000);
-    }
+      // Update display
+      setState((prev) => ({ ...prev, timeLeft: remaining }));
 
-    // Cleanup: sync final time to database on unmount or timer stop
+      // Auto-submit when expired (guarded by ref to prevent double-fire)
+      if (remaining <= 0 && !autoSubmitFiredRef.current) {
+        autoSubmitFiredRef.current = true;
+        if (timerRef.current) clearInterval(timerRef.current);
+        setState((prev) => ({
+          ...prev,
+          isTimerRunning: false,
+          timeLeft: 0,
+        }));
+        submitModule(true);
+        return;
+      }
+
+      // Periodic sync to database
+      tickCountRef.current++;
+      if (tickCountRef.current >= DB_SYNC_INTERVAL && attemptModuleId) {
+        tickCountRef.current = 0;
+        const elapsed = Math.max(
+          0,
+          Math.floor(
+            (now -
+              (deadlineRef.current -
+                getModuleDuration(state.currentModule?.module_type || "") *
+                  1000)) /
+              1000,
+          ),
+        );
+        supabase
+          .from("attempt_modules")
+          .update({
+            time_remaining_seconds: remaining,
+            time_spent_seconds: elapsed,
+          })
+          .eq("id", attemptModuleId)
+          .then(({ error }) => {
+            if (error) console.error("Timer sync error:", error);
+          });
+      }
+    }, 1000);
+
+    // Cleanup: sync final time on unmount or timer stop
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
 
-        // Final sync to database
-        if (state.currentAttemptModule?.id && state.timeLeft > 0) {
+        if (attemptModuleId && deadlineRef.current > 0) {
+          const now = Date.now();
+          const remaining = Math.max(
+            0,
+            Math.floor((deadlineRef.current - now) / 1000),
+          );
+          const startMs =
+            deadlineRef.current -
+            getModuleDuration(state.currentModule?.module_type || "") * 1000;
+          const elapsed = Math.max(0, Math.floor((now - startMs) / 1000));
           supabase
             .from("attempt_modules")
             .update({
-              time_remaining_seconds: state.timeLeft,
-              time_spent_seconds:
-                state.currentAttemptModule.time_spent_seconds || 0,
+              time_remaining_seconds: remaining,
+              time_spent_seconds: elapsed,
             })
-            .eq("id", state.currentAttemptModule.id)
+            .eq("id", attemptModuleId)
             .then(({ error }) => {
               if (error) console.error("Final timer sync error:", error);
             });
@@ -726,7 +768,9 @@ export function ExamProvider({
     };
   }, [
     state.isTimerRunning,
+    state.moduleDeadline,
     state.currentAttemptModule?.id,
+    state.currentModule?.module_type,
     submitModule,
     supabase,
   ]);
@@ -1093,9 +1137,21 @@ export function ExamProvider({
           attemptModule.time_spent_seconds = 0;
         }
 
-        // Initialize timer with remaining time from database
-        const timeToSet =
-          attemptModule.time_remaining_seconds || moduleDuration;
+        // Initialize timer from server-computed deadline (tamper-resistant)
+        // Deadline = started_at + module_duration. Client counts down from this.
+        const startedAtMs = attemptModule.started_at
+          ? new Date(attemptModule.started_at).getTime()
+          : Date.now();
+        const deadline = startedAtMs + moduleDuration * 1000;
+        const initialTimeLeft = Math.max(
+          0,
+          Math.floor((deadline - Date.now()) / 1000),
+        );
+
+        // Reset auto-submit guard for new module
+        autoSubmitFiredRef.current = false;
+        deadlineRef.current = deadline;
+        tickCountRef.current = 0;
 
         // Mark module as loaded to prevent duplicate loads
         loadedModulesRef.current.add(moduleId);
@@ -1112,8 +1168,10 @@ export function ExamProvider({
           questionAnswers: questionAnswers || [],
           answers: answersMap,
           totalQuestions: questionAnswers?.length || 0,
-          timeLeft: timeToSet,
-          isTimerRunning: attemptModule.status === "in_progress",
+          moduleDeadline: deadline,
+          timeLeft: initialTimeLeft,
+          isTimerRunning:
+            attemptModule.status === "in_progress" && initialTimeLeft > 0,
           isLoading: false,
         }));
       } catch (error: any) {

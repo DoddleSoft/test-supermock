@@ -14,6 +14,7 @@ export interface ModuleAnswers {
 }
 
 const STORAGE_KEY_PREFIX = "exam_answers_";
+const LAST_SYNC_KEY_PREFIX = "exam_last_sync_";
 
 /**
  * Get storage key for a specific attempt
@@ -124,4 +125,34 @@ export function getModuleAnswersFromStorage(
   if (!stored) return [];
 
   return stored.answers.filter((a) => a.moduleType === moduleType);
+}
+
+/**
+ * Get the timestamp of the last successful sync to database.
+ * Used to avoid re-saving unchanged answers on Ctrl+S.
+ */
+export function getLastSyncTimestamp(attemptId: string): number {
+  try {
+    const val = localStorage.getItem(`${LAST_SYNC_KEY_PREFIX}${attemptId}`);
+    return val ? parseInt(val, 10) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Record the timestamp of a successful sync.
+ */
+export function setLastSyncTimestamp(
+  attemptId: string,
+  timestamp: number,
+): void {
+  try {
+    localStorage.setItem(
+      `${LAST_SYNC_KEY_PREFIX}${attemptId}`,
+      timestamp.toString(),
+    );
+  } catch {
+    // Silently fail
+  }
 }

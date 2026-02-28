@@ -31,6 +31,9 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
     attemptId,
     currentAttemptModule,
     submitModule,
+    showSubmitDialog,
+    submitDialogMessage,
+    dismissSubmitDialog,
   } = useExam();
 
   const [moduleLoaded, setModuleLoaded] = useState(false);
@@ -91,6 +94,25 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [currentAttemptModule, attemptId]);
+
+  // Handle auto-submit dialog → navigate to waiting room
+  useEffect(() => {
+    if (showSubmitDialog && submitDialogMessage) {
+      setIsSubmitting(true);
+      const timer = setTimeout(() => {
+        dismissSubmitDialog();
+        router.push(`/mock-test/${slug}/${attemptId}`);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [
+    showSubmitDialog,
+    submitDialogMessage,
+    dismissSubmitDialog,
+    router,
+    slug,
+    attemptId,
+  ]);
 
   const currentSection = sections[currentSectionIndex];
 
@@ -300,6 +322,21 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
           </div>
         </div>
       </div>
+
+      {/* Auto-submit dialog overlay */}
+      {showSubmitDialog && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center">
+          <div className="bg-white rounded-2xl p-8 shadow-2xl flex flex-col items-center gap-4 max-w-sm text-center">
+            <div className="w-16 h-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-lg font-semibold text-gray-900">
+              {submitDialogMessage}
+            </p>
+            <p className="text-sm text-gray-600">
+              Redirecting to the next section...
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

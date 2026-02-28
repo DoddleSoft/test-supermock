@@ -52,16 +52,12 @@ export default function ReadingTestClient({
   const moduleLoadInProgress = useRef(false);
 
   // Handle auto-submit dialog
+  // Handle auto-submit dialog → navigate to waiting room
   useEffect(() => {
     if (showSubmitDialog && submitDialogMessage) {
       const timer = setTimeout(() => {
-        const nextUrl = getNextModuleUrl();
         dismissSubmitDialog();
-        if (nextUrl) {
-          router.push(nextUrl);
-        } else {
-          router.push(`/mock-test/${centerSlug}/profile`);
-        }
+        router.push(`/mock-test/${centerSlug}/${attemptId}`);
       }, 3000);
 
       return () => clearTimeout(timer);
@@ -69,10 +65,10 @@ export default function ReadingTestClient({
   }, [
     showSubmitDialog,
     submitDialogMessage,
-    getNextModuleUrl,
     dismissSubmitDialog,
     router,
     centerSlug,
+    attemptId,
   ]);
 
   // Load the reading module on mount

@@ -2,6 +2,8 @@ import { createClient } from "@/utils/supabase/client";
 import {
   loadAnswersFromStorage,
   clearAnswersFromStorage,
+  getLastSyncTimestamp,
+  setLastSyncTimestamp,
   StoredAnswer,
 } from "@/utils/answerStorage";
 
@@ -87,7 +89,9 @@ export async function saveAnswersBatchToDatabase(
 }
 
 /**
- * Save all stored answers from localStorage to database
+ * Save all stored answers from localStorage to database.
+ * Only syncs answers that have changed since the last successful sync
+ * to avoid redundant database writes on Ctrl+S.
  */
 export async function syncStoredAnswersToDatabase(
   attemptId: string,
@@ -99,14 +103,30 @@ export async function syncStoredAnswersToDatabase(
       return { success: true, savedCount: 0 };
     }
 
-    const params: SaveAnswerParams[] = stored.answers.map((a) => ({
+    // Only sync answers modified since the last successful sync
+    const lastSync = getLastSyncTimestamp(attemptId);
+    const unsyncedAnswers = stored.answers.filter(
+      (a) => a.timestamp > lastSync,
+    );
+
+    if (unsyncedAnswers.length === 0) {
+      return { success: true, savedCount: 0 };
+    }
+
+    const params: SaveAnswerParams[] = unsyncedAnswers.map((a) => ({
       attemptModuleId,
       referenceId: a.referenceId,
       questionRef: a.questionRef,
       studentResponse: a.studentResponse,
     }));
 
-    return await saveAnswersBatchToDatabase(params);
+    const result = await saveAnswersBatchToDatabase(params);
+
+    if (result.success) {
+      setLastSyncTimestamp(attemptId, Date.now());
+    }
+
+    return result;
   } catch (error) {
     console.error("Error syncing stored answers to database:", error);
     return {

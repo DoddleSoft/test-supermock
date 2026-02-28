@@ -129,12 +129,16 @@ export default function WaitingRoomClient({
 
         setModuleStatuses(statusMap);
 
-        // Check if ALL modules are completed - if so, redirect to hub
-        const allCompleted = data.every((m: ModuleStatus) => m.status === "completed");
+        // Check if ALL modules are completed - if so, redirect to profile
+        const allCompleted = data.every(
+          (m: ModuleStatus) => m.status === "completed",
+        );
         if (allCompleted && data.length > 0) {
-          console.log("[WaitingRoom] All modules completed, redirecting to hub page");
+          console.log(
+            "[WaitingRoom] All modules completed, redirecting to profile page",
+          );
           setTimeout(() => {
-            router.push(`/mock-test/${centerSlug}`);
+            router.push(`/mock-test/${centerSlug}/profile`);
           }, 1500);
         }
       } catch (error) {

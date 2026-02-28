@@ -54,17 +54,12 @@ export default function ListeningTestClient({
   const localAnswersRef = useRef<Record<string, string>>({});
   const moduleLoadInProgress = useRef(false);
 
-  // Handle auto-submit dialog
+  // Handle auto-submit dialog → navigate to waiting room
   useEffect(() => {
     if (showSubmitDialog && submitDialogMessage) {
       const timer = setTimeout(() => {
-        const nextUrl = getNextModuleUrl();
         dismissSubmitDialog();
-        if (nextUrl) {
-          router.push(nextUrl);
-        } else {
-          router.push(`/mock-test/${slug}/profile`);
-        }
+        router.push(`/mock-test/${slug}/${attemptId}`);
       }, 3000);
 
       return () => clearTimeout(timer);
@@ -72,10 +67,10 @@ export default function ListeningTestClient({
   }, [
     showSubmitDialog,
     submitDialogMessage,
-    getNextModuleUrl,
     dismissSubmitDialog,
     router,
     slug,
+    attemptId,
   ]);
 
   // Load the listening module on mount
