@@ -541,7 +541,10 @@ class AuthService {
       });
 
       if (error) {
-        return { success: false, error: error.message };
+        return {
+          success: false,
+          error: "Failed to send password reset email. Please try again.",
+        };
       }
 
       return {
@@ -549,8 +552,10 @@ class AuthService {
         error: "Password reset instructions sent to your email",
       };
     } catch (error) {
-      const authError = error as AuthError;
-      return { success: false, error: authError.message };
+      return {
+        success: false,
+        error: "An unexpected error occurred. Please try again.",
+      };
     }
   }
 
@@ -639,12 +644,18 @@ class AuthService {
       });
 
       if (updateError) {
-        return { success: false, error: updateError.message };
+        return {
+          success: false,
+          error: "Failed to update password. Please try again.",
+        };
       }
 
       return { success: true };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      return {
+        success: false,
+        error: "An unexpected error occurred while changing your password.",
+      };
     }
   }
 
@@ -673,7 +684,7 @@ class AuthService {
       if (error) {
         return {
           success: false,
-          error: error.message,
+          error: "Failed to create user profile. Please try again.",
         };
       }
 
@@ -683,10 +694,7 @@ class AuthService {
     } catch (error) {
       return {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to create user profile",
+        error: "An unexpected error occurred. Please try again.",
       };
     }
   }
@@ -707,7 +715,7 @@ class AuthService {
       if (error) {
         return {
           success: false,
-          error: error.message,
+          error: "Failed to load user profile.",
         };
       }
 
@@ -725,10 +733,7 @@ class AuthService {
     } catch (error) {
       return {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to fetch user profile",
+        error: "Failed to load user profile.",
       };
     }
   }
@@ -751,7 +756,7 @@ class AuthService {
       if (error) {
         return {
           success: false,
-          error: error.message,
+          error: "Failed to load centers.",
         };
       }
 
@@ -762,10 +767,7 @@ class AuthService {
     } catch (error) {
       return {
         success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to fetch user centers",
+        error: "Failed to load centers.",
       };
     }
   }
@@ -780,7 +782,7 @@ class AuthService {
       if (error) {
         return {
           success: false,
-          error: error.message,
+          error: "Sign out failed. Please try again.",
         };
       }
 
@@ -790,7 +792,7 @@ class AuthService {
     } catch (error) {
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Sign out failed",
+        error: "Sign out failed. Please try again.",
       };
     }
   }

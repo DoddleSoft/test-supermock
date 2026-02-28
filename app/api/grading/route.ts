@@ -616,7 +616,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     console.log(
       `[Grading v${GRADING_VERSION}] Module ${attemptModuleId} (${moduleType}) graded in ${elapsed}ms: ` +
         `${correctCount}/${moduleQuestions.length} correct, band ${bandScore}, ` +
-        `next=${flowResult.nextModuleType ?? "none"}, attemptDone=${flowResult.attemptCompleted}`,
+        `next=${nextModuleType ?? "none"}, attemptDone=${attemptCompleted}`,
     );
 
     return NextResponse.json({

@@ -21,6 +21,10 @@ export async function saveAnswerToDatabase(
   params: SaveAnswerParams,
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    if (!params.attemptModuleId || !params.referenceId || !params.questionRef) {
+      return { success: false, error: "Missing required answer fields" };
+    }
+
     const supabase = createClient();
 
     const { error } = await supabase.from("student_answers").upsert(
@@ -37,7 +41,10 @@ export async function saveAnswerToDatabase(
 
     if (error) {
       console.error("Error saving answer to database:", error);
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        error: "Failed to save answer. Please try again.",
+      };
     }
 
     return { success: true };
@@ -45,7 +52,7 @@ export async function saveAnswerToDatabase(
     console.error("Error saving answer to database:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: "An unexpected error occurred while saving your answer.",
     };
   }
 }
@@ -57,9 +64,21 @@ export async function saveAnswersBatchToDatabase(
   answers: SaveAnswerParams[],
 ): Promise<{ success: boolean; error?: string; savedCount: number }> {
   try {
+    if (!answers || answers.length === 0) {
+      return { success: true, savedCount: 0 };
+    }
+
+    // Validate all records have required fields
+    const validAnswers = answers.filter(
+      (a) => a.attemptModuleId && a.referenceId && a.questionRef,
+    );
+    if (validAnswers.length === 0) {
+      return { success: true, savedCount: 0 };
+    }
+
     const supabase = createClient();
 
-    const records = answers.map((a) => ({
+    const records = validAnswers.map((a) => ({
       attempt_module_id: a.attemptModuleId,
       reference_id: a.referenceId,
       question_ref: a.questionRef,
@@ -74,7 +93,11 @@ export async function saveAnswersBatchToDatabase(
 
     if (error) {
       console.error("Error saving answers batch to database:", error);
-      return { success: false, error: error.message, savedCount: 0 };
+      return {
+        success: false,
+        error: "Failed to save answers. Please try again.",
+        savedCount: 0,
+      };
     }
 
     return { success: true, savedCount: count || records.length };
@@ -82,7 +105,7 @@ export async function saveAnswersBatchToDatabase(
     console.error("Error saving answers batch to database:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: "An unexpected error occurred while saving your answers.",
       savedCount: 0,
     };
   }
@@ -98,6 +121,14 @@ export async function syncStoredAnswersToDatabase(
   attemptModuleId: string,
 ): Promise<{ success: boolean; error?: string; savedCount: number }> {
   try {
+    if (!attemptId || !attemptModuleId) {
+      return {
+        success: false,
+        error: "Missing attempt or module reference",
+        savedCount: 0,
+      };
+    }
+
     const stored = loadAnswersFromStorage(attemptId);
     if (!stored || stored.answers.length === 0) {
       return { success: true, savedCount: 0 };
@@ -131,7 +162,7 @@ export async function syncStoredAnswersToDatabase(
     console.error("Error syncing stored answers to database:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: "An unexpected error occurred while syncing your answers.",
       savedCount: 0,
     };
   }

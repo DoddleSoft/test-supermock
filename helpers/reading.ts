@@ -59,6 +59,8 @@ export async function fetchReadingModule(
   moduleId: string,
 ): Promise<ReadingModule | null> {
   try {
+    if (!moduleId) return null;
+
     const supabase = createClient();
 
     // Fetch module details
@@ -124,6 +126,8 @@ export async function fetchReadingModuleByPaperId(
   paperId: string,
 ): Promise<ReadingModule | null> {
   try {
+    if (!paperId) return null;
+
     const supabase = createClient();
 
     // Fetch reading module for this paper
@@ -275,6 +279,10 @@ export async function submitReadingAnswers(
   timeSpent: number,
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    if (!moduleId || !userId) {
+      return { success: false, error: "Missing required submission data" };
+    }
+
     const supabase = createClient();
 
     // Convert Map to array for submission
@@ -291,7 +299,10 @@ export async function submitReadingAnswers(
 
     if (error) {
       console.error("Error submitting answers:", error);
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        error: "Failed to submit answers. Please try again.",
+      };
     }
 
     return { success: true };
@@ -299,7 +310,7 @@ export async function submitReadingAnswers(
     console.error("Error in submitReadingAnswers:", error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: "An unexpected error occurred while submitting answers.",
     };
   }
 }

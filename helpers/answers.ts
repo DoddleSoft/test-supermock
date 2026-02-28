@@ -1,5 +1,12 @@
 import { createClient } from "@/utils/supabase/client";
 
+/** Loose UUID v4 format check */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isValidUUID(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 export interface StudentAnswer {
   id?: string;
   attempt_module_id: string;
@@ -23,6 +30,17 @@ export async function saveAnswer(
   answer: StudentAnswer,
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    // Input validation
+    if (!answer.attempt_module_id || !isValidUUID(answer.attempt_module_id)) {
+      return { success: false, error: "Invalid module reference" };
+    }
+    if (!answer.sub_section_id || !isValidUUID(answer.sub_section_id)) {
+      return { success: false, error: "Invalid section reference" };
+    }
+    if (!answer.question_ref || answer.question_ref.trim().length === 0) {
+      return { success: false, error: "Invalid question reference" };
+    }
+
     const supabase = createClient();
 
     const { error } = await supabase.from("student_answers").upsert(
@@ -39,13 +57,19 @@ export async function saveAnswer(
 
     if (error) {
       console.error("Error saving answer:", error);
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        error: "Failed to save answer. Please try again.",
+      };
     }
 
     return { success: true };
   } catch (error: any) {
     console.error("Error in saveAnswer:", error);
-    return { success: false, error: error.message };
+    return {
+      success: false,
+      error: "An unexpected error occurred while saving your answer.",
+    };
   }
 }
 
@@ -56,6 +80,23 @@ export async function saveAnswersBatch(
   answers: StudentAnswer[],
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    if (!answers || answers.length === 0) {
+      return { success: true };
+    }
+
+    // Validate all answers before inserting
+    for (const answer of answers) {
+      if (!answer.attempt_module_id || !isValidUUID(answer.attempt_module_id)) {
+        return { success: false, error: "Invalid module reference in batch" };
+      }
+      if (!answer.sub_section_id || !isValidUUID(answer.sub_section_id)) {
+        return { success: false, error: "Invalid section reference in batch" };
+      }
+      if (!answer.question_ref || answer.question_ref.trim().length === 0) {
+        return { success: false, error: "Invalid question reference in batch" };
+      }
+    }
+
     const supabase = createClient();
 
     const { error } = await supabase.from("student_answers").upsert(
@@ -72,13 +113,19 @@ export async function saveAnswersBatch(
 
     if (error) {
       console.error("Error saving answers batch:", error);
-      return { success: false, error: error.message };
+      return {
+        success: false,
+        error: "Failed to save answers. Please try again.",
+      };
     }
 
     return { success: true };
   } catch (error: any) {
     console.error("Error in saveAnswersBatch:", error);
-    return { success: false, error: error.message };
+    return {
+      success: false,
+      error: "An unexpected error occurred while saving your answers.",
+    };
   }
 }
 
@@ -89,6 +136,10 @@ export async function loadAnswers(
   attemptModuleId: string,
 ): Promise<{ answers: StudentAnswer[]; error?: string }> {
   try {
+    if (!attemptModuleId || !isValidUUID(attemptModuleId)) {
+      return { answers: [], error: "Invalid module reference" };
+    }
+
     const supabase = createClient();
 
     const { data, error } = await supabase
@@ -98,13 +149,19 @@ export async function loadAnswers(
 
     if (error) {
       console.error("Error loading answers:", error);
-      return { answers: [], error: error.message };
+      return {
+        answers: [],
+        error: "Failed to load answers. Please try again.",
+      };
     }
 
     return { answers: data || [] };
   } catch (error: any) {
     console.error("Error in loadAnswers:", error);
-    return { answers: [], error: error.message };
+    return {
+      answers: [],
+      error: "An unexpected error occurred while loading answers.",
+    };
   }
 }
 
@@ -203,6 +260,10 @@ export async function evaluateModuleAnswers(attemptModuleId: string): Promise<{
   error?: string;
 }> {
   try {
+    if (!attemptModuleId || !isValidUUID(attemptModuleId)) {
+      return { success: false, error: "Invalid module reference" };
+    }
+
     const supabase = createClient();
 
     // Get all student answers
@@ -241,33 +302,36 @@ export async function evaluateModuleAnswers(attemptModuleId: string): Promise<{
       ]) || [],
     );
 
-    // Evaluate each answer
-    const updatedAnswers = studentAnswers.map((answer) => {
+    // Evaluate each answer and build minimal update records
+    const updateRecords: Array<{
+      id: string;
+      is_correct: boolean | null;
+      marks_awarded: number | null;
+    }> = [];
+
+    studentAnswers.forEach((answer) => {
       const key = `${answer.sub_section_id}_${answer.question_ref}`;
       const correctAnswer = qaMap.get(key);
 
       if (!correctAnswer) {
-        return {
-          ...answer,
+        updateRecords.push({
+          id: answer.id,
           is_correct: false,
           marks_awarded: 0,
-        };
+        });
+        return;
       }
 
       maxScore += correctAnswer.marks || 1;
 
-      // Skip auto-evaluation for essay/writing type questions
-      const subSection = correctAnswer.sub_section_id;
-      // You can check question_type from sub_sections table if needed
-      // For now, we'll evaluate all non-null correct_answers
-
       if (!correctAnswer.correct_answers) {
         // No correct answer means manual grading (writing/speaking)
-        return {
-          ...answer,
+        updateRecords.push({
+          id: answer.id,
           is_correct: null,
           marks_awarded: null,
-        };
+        });
+        return;
       }
 
       const validation = validateAnswer(
@@ -277,18 +341,17 @@ export async function evaluateModuleAnswers(attemptModuleId: string): Promise<{
       );
 
       totalScore += validation.marksAwarded;
-
-      return {
-        ...answer,
+      updateRecords.push({
+        id: answer.id,
         is_correct: validation.isCorrect,
         marks_awarded: validation.marksAwarded,
-      };
+      });
     });
 
-    // Update student answers with evaluation
+    // Update student answers with evaluation — only id + grading fields
     const { error: updateError } = await supabase
       .from("student_answers")
-      .upsert(updatedAnswers);
+      .upsert(updateRecords, { onConflict: "id" });
 
     if (updateError) throw updateError;
 
@@ -311,7 +374,7 @@ export async function evaluateModuleAnswers(attemptModuleId: string): Promise<{
     console.error("Error in evaluateModuleAnswers:", error);
     return {
       success: false,
-      error: error.message,
+      error: "Failed to evaluate answers. Please try again.",
     };
   }
 }
@@ -358,9 +421,11 @@ export async function submitModule(attemptModuleId: string): Promise<{
   error?: string;
 }> {
   try {
-    const supabase = createClient();
+    if (!attemptModuleId || !isValidUUID(attemptModuleId)) {
+      return { success: false, error: "Invalid module reference" };
+    }
 
-    // Get module info to check if already completed
+    const supabase = createClient();
     const { data: moduleInfo, error: moduleError } = await supabase
       .from("attempt_modules")
       .select("status, started_at, time_spent_seconds, modules(module_type)")
@@ -368,6 +433,8 @@ export async function submitModule(attemptModuleId: string): Promise<{
       .single();
 
     if (moduleError) throw moduleError;
+
+    // Get module info to check if already completed
 
     // Calculate time spent since module started
     const startedAt = moduleInfo.started_at
@@ -416,7 +483,7 @@ export async function submitModule(attemptModuleId: string): Promise<{
     console.error("Error in submitModule:", error);
     return {
       success: false,
-      error: error.message,
+      error: "Failed to submit module. Please try again.",
     };
   }
 }

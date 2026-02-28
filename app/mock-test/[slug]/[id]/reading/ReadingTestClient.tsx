@@ -43,7 +43,6 @@ export default function ReadingTestClient({
     showSubmitDialog,
     submitDialogMessage,
     dismissSubmitDialog,
-    getNextModuleUrl,
     currentAttemptModule,
   } = useExam();
 
@@ -51,7 +50,6 @@ export default function ReadingTestClient({
   const localAnswersRef = useRef<Record<string, string>>({});
   const moduleLoadInProgress = useRef(false);
 
-  // Handle auto-submit dialog
   // Handle auto-submit dialog → navigate to waiting room
   useEffect(() => {
     if (showSubmitDialog && submitDialogMessage) {

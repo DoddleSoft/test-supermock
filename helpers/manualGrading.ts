@@ -5,6 +5,10 @@
 
 import { createClient } from "@/utils/supabase/client";
 
+/** Loose UUID v4 format check */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface ManualGradeInput {
   attemptModuleId: string;
   scoreObtained: number;
@@ -22,6 +26,21 @@ export async function manuallyGradeModule(input: ManualGradeInput): Promise<{
 }> {
   try {
     const supabase = createClient();
+
+    // Input validation
+    if (!input.attemptModuleId || !UUID_RE.test(input.attemptModuleId)) {
+      return { success: false, error: "Invalid module reference" };
+    }
+    if (
+      typeof input.bandScore !== "number" ||
+      input.bandScore < 0 ||
+      input.bandScore > 9
+    ) {
+      return { success: false, error: "Band score must be between 0 and 9" };
+    }
+    if (typeof input.scoreObtained !== "number" || input.scoreObtained < 0) {
+      return { success: false, error: "Score must be a non-negative number" };
+    }
 
     // Verify this is a writing or speaking module
     const { data: moduleData, error: moduleError } = await supabase
@@ -55,7 +74,10 @@ export async function manuallyGradeModule(input: ManualGradeInput): Promise<{
       .eq("id", input.attemptModuleId);
 
     if (updateError) {
-      return { success: false, error: updateError.message };
+      return {
+        success: false,
+        error: "Failed to save grades. Please try again.",
+      };
     }
 
     const attemptId = (moduleData as any).attempt_id;
@@ -68,7 +90,7 @@ export async function manuallyGradeModule(input: ManualGradeInput): Promise<{
     console.error("Error in manuallyGradeModule:", error);
     return {
       success: false,
-      error: error.message,
+      error: "An unexpected error occurred while grading. Please try again.",
     };
   }
 }
@@ -160,7 +182,7 @@ export async function getPendingGradingModules(centerId?: string): Promise<{
     const { data, error } = await query;
 
     if (error) {
-      return { success: false, error: error.message };
+      return { success: false, error: "Failed to load pending modules" };
     }
 
     return { success: true, data: data || [] };
@@ -168,7 +190,7 @@ export async function getPendingGradingModules(centerId?: string): Promise<{
     console.error("Error getting pending grading modules:", error);
     return {
       success: false,
-      error: error.message,
+      error: "An unexpected error occurred while loading modules.",
     };
   }
 }
@@ -182,6 +204,10 @@ export async function getModuleForGrading(attemptModuleId: string): Promise<{
   error?: string;
 }> {
   try {
+    if (!attemptModuleId || !UUID_RE.test(attemptModuleId)) {
+      return { success: false, error: "Invalid module reference" };
+    }
+
     const supabase = createClient();
 
     // Get module info
@@ -202,7 +228,7 @@ export async function getModuleForGrading(attemptModuleId: string): Promise<{
       .single();
 
     if (moduleError) {
-      return { success: false, error: moduleError.message };
+      return { success: false, error: "Module not found or access denied" };
     }
 
     // Get student answers
@@ -213,7 +239,7 @@ export async function getModuleForGrading(attemptModuleId: string): Promise<{
       .order("created_at", { ascending: true });
 
     if (answersError) {
-      return { success: false, error: answersError.message };
+      return { success: false, error: "Failed to load student answers" };
     }
 
     return {
@@ -227,7 +253,7 @@ export async function getModuleForGrading(attemptModuleId: string): Promise<{
     console.error("Error getting module for grading:", error);
     return {
       success: false,
-      error: error.message,
+      error: "An unexpected error occurred while loading module data.",
     };
   }
 }

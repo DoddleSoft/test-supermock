@@ -114,7 +114,7 @@ export async function validateStudentAttemptAccess(
       return {
         success: false,
         hasAccess: false,
-        error: `Student profile not found for email ${user.email}. Error: ${profileError?.message || "No profile exists"}`,
+        error: "Student profile not found. Please contact your administrator.",
       };
     }
 
@@ -130,7 +130,7 @@ export async function validateStudentAttemptAccess(
       return {
         success: false,
         hasAccess: false,
-        error: `Access validation failed: ${rpcError.message}`,
+        error: "Access validation failed. Please try again.",
       };
     }
 
@@ -163,7 +163,7 @@ export async function loadPaperWithModules(
     if (error) {
       return {
         success: false,
-        error: `Failed to load paper: ${error.message}`,
+        error: "Failed to load test content. Please try again.",
       };
     }
 
@@ -216,7 +216,7 @@ export async function loadExamData(attemptId: string): Promise<{
     if (attemptError || !attemptData) {
       return {
         success: false,
-        error: `Test attempt not found: ${attemptError?.message || "No data"}`,
+        error: "Test attempt not found. Please try again.",
       };
     }
 

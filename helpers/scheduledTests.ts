@@ -322,10 +322,20 @@ export async function joinMockTest(
   error?: string;
 }> {
   try {
+    // Validate OTP is a non-empty numeric string
+    const trimmedOtp = otp?.trim();
+    if (!trimmedOtp || !/^\d+$/.test(trimmedOtp)) {
+      return { success: false, error: "Please enter a valid numeric OTP" };
+    }
+
+    if (!scheduledTestId || !userEmail) {
+      return { success: false, error: "Missing required test information" };
+    }
+
     const supabase = createClient();
 
     const { data, error } = await supabase.rpc("join_mock_test", {
-      p_otp: parseInt(otp),
+      p_otp: parseInt(trimmedOtp, 10),
       p_scheduled_test_id: scheduledTestId,
       p_user_email: userEmail,
     });

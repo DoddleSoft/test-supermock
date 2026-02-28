@@ -40,7 +40,6 @@ export default function ListeningTestClient({
     showSubmitDialog,
     submitDialogMessage,
     dismissSubmitDialog,
-    getNextModuleUrl,
   } = useExam();
 
   const [isPlaying, setIsPlaying] = useState(false);

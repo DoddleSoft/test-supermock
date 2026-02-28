@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { PenTool } from "lucide-react";
 import WritingNavbar from "@/component/modules/WritingNavbar";
 import { useExam } from "@/context/ExamContext";
 import {
@@ -139,13 +138,7 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
     }
   };
 
-  // Auto-save answers to context periodically
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // This is handled by localStorage, no need to submit to context continuously
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
+  // Auto-save is handled by localStorage — no periodic DB push needed.
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
