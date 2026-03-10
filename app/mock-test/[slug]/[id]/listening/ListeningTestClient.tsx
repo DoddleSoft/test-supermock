@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Headphones, AlertTriangle } from "lucide-react";
+import { Headphones, AlertTriangle, Play } from "lucide-react";
 import ListeningNavbar from "@/component/modules/ListeningNavbar";
 import RenderBlock from "@/component/modules/RenderBlock";
 import { useExam } from "@/context/ExamContext";
@@ -34,6 +34,7 @@ export default function ListeningTestClient({
     setCurrentSection,
     loadModule,
     submitAnswer,
+    submitMultipleAnswers,
     attemptId,
     currentAttemptModule,
     submitModule,
@@ -48,10 +49,15 @@ export default function ListeningTestClient({
   const [audioEnded, setAudioEnded] = useState(false);
   const [showNavWarning, setShowNavWarning] = useState(false);
   const [pendingSection, setPendingSection] = useState<number | null>(null);
+  // Whether autoplay was blocked and we need to show a manual Play button
+  const [needsManualPlay, setNeedsManualPlay] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioTimesRef = useRef<Record<string, number>>({});
   const localAnswersRef = useRef<Record<string, string>>({});
   const moduleLoadInProgress = useRef(false);
+  // Track the section ID that the current audio src belongs to so we
+  // never accidentally apply the wrong saved timestamp after a section change.
+  const loadedAudioSectionRef = useRef<string | null>(null);
 
   // Handle auto-submit dialog → navigate to waiting room
   useEffect(() => {
@@ -93,20 +99,30 @@ export default function ListeningTestClient({
     loadModule(listeningModule.id)
       .then(() => {
         setModuleLoaded(true);
-        // Load answers from localStorage
+        // Load answers from localStorage and submit as a single batch
         if (attemptId) {
           const storedAnswers = getModuleAnswersFromStorage(
             attemptId,
             "listening",
           );
-          const answerMap: Record<string, string> = {};
+          const batch: Array<{
+            questionRef: string;
+            subSectionId: string;
+            response: string;
+          }> = [];
           storedAnswers.forEach((a) => {
             const key = `${a.referenceId}_${a.questionRef}`;
-            answerMap[key] = a.studentResponse;
-            // Submit to context
-            submitAnswer(a.questionRef, a.referenceId, a.studentResponse);
+            localAnswersRef.current[key] = a.studentResponse;
+            batch.push({
+              questionRef: a.questionRef,
+              subSectionId: a.referenceId,
+              response: a.studentResponse,
+            });
           });
-          localAnswersRef.current = answerMap;
+          // Single context update instead of N individual submitAnswer calls
+          if (batch.length > 0) {
+            submitMultipleAnswers(batch);
+          }
         }
       })
       .catch((error) => {
@@ -201,24 +217,44 @@ export default function ListeningTestClient({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [currentAttemptModule, attemptId]);
 
-  const audioPath = useMemo(() => {
-    // Check section resource_url first
+  // Periodic auto-save every 3 minutes
+  useEffect(() => {
+    if (!currentAttemptModule?.id || !attemptId) return;
+    const amId = currentAttemptModule.id;
+
+    const interval = setInterval(
+      () => {
+        syncStoredAnswersToDatabase(attemptId, amId).catch((err) =>
+          console.error("Auto-save failed:", err),
+        );
+      },
+      3 * 60 * 1000,
+    );
+
+    return () => clearInterval(interval);
+  }, [currentAttemptModule?.id, attemptId]);
+
+  // Build a proxied audio URL so the real storage URL is never in the DOM.
+  // We pass section/subsection IDs to the server which resolves & streams audio.
+  const audioProxyUrl = useMemo(() => {
+    // Check section resource_url first (only check type, don't expose url)
     if (currentSection?.resource_url) {
       const url = currentSection.resource_url;
-      // Check if it's an audio file
       if (url.match(/\.(mp3|mpeg|wav|ogg|m4a)$/i) || url.includes("/audio/")) {
-        return url;
+        return `/api/audio?sectionId=${encodeURIComponent(currentSection.id)}`;
       }
     }
 
     // Check subsections
-    const subsectionAudio = sectionSubSections.find((ss) => {
+    const subsectionWithAudio = sectionSubSections.find((ss) => {
       if (!ss.resource_url) return false;
       const url = ss.resource_url;
       return url.match(/\.(mp3|mpeg|wav|ogg|m4a)$/i) || url.includes("/audio/");
-    })?.resource_url;
+    });
 
-    if (subsectionAudio) return subsectionAudio;
+    if (subsectionWithAudio) {
+      return `/api/audio?subSectionId=${encodeURIComponent(subsectionWithAudio.id)}`;
+    }
 
     console.warn(
       "[Listening] No audio file found for section:",
@@ -227,15 +263,23 @@ export default function ListeningTestClient({
     return "";
   }, [currentSection, sectionSubSections]);
 
-  // Handle section navigation with warning
+  // Handle section navigation with warning — pause audio immediately
   const handleSectionChange = (newIndex: number) => {
     if (newIndex === currentSectionIndex) return;
 
-    // Show warning when navigating away from current section
-    if (isPlaying && !audioEnded) {
+    const audio = audioRef.current;
+    // Always save current playback time before any navigation
+    if (audio && currentSection?.id) {
+      audioTimesRef.current[currentSection.id] = audio.currentTime;
+    }
+
+    // If audio is still playing, pause it NOW and show warning
+    if (audio && !audio.paused && !audio.ended) {
+      audio.pause();
       setShowNavWarning(true);
       setPendingSection(newIndex);
     } else {
+      // Audio finished or never started — just navigate
       setCurrentSection(newIndex);
     }
   };
@@ -249,92 +293,130 @@ export default function ListeningTestClient({
   };
 
   const cancelNavigation = () => {
+    // Resume audio from the exact spot the user left off
+    const audio = audioRef.current;
+    if (audio && currentSection?.id) {
+      const savedTime = audioTimesRef.current[currentSection.id] ?? 0;
+      audio.currentTime = savedTime;
+      audio.play().catch(console.error);
+    }
     setPendingSection(null);
     setShowNavWarning(false);
   };
 
-  // Audio management
+  // Manual play handler — used when autoplay is blocked by the browser
+  const handleManualPlay = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio
+      .play()
+      .then(() => {
+        setNeedsManualPlay(false);
+        setIsPlaying(true);
+      })
+      .catch(console.error);
+  }, []);
+
+  // ---------- Audio management ----------
+  // When the section changes, reset UI state and update the audio source.
+  // We do NOT set currentTime here — that is deferred to onLoadedMetadata
+  // because the browser may not be ready to seek yet.
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !currentSection?.id) return;
 
+    // Reset UI for the new section
     setAudioEnded(false);
     setAudioProgress(0);
-
-    return () => {
-      if (audio && currentSection?.id) {
-        audioTimesRef.current[currentSection.id] = audio.currentTime;
-      }
-    };
+    setNeedsManualPlay(false);
+    // Mark which section this audio load is for (prevents race conditions)
+    loadedAudioSectionRef.current = currentSection.id;
   }, [currentSection?.id]);
 
+  // Core audio lifecycle — attach listeners and attempt autoplay
   useEffect(() => {
-    if (moduleLoaded && sections.length > 0 && audioRef.current && audioPath) {
-      const audio = audioRef.current;
+    if (!moduleLoaded || sections.length === 0 || !audioProxyUrl) return;
+    const audio = audioRef.current;
+    if (!audio) return;
+    const sectionId = currentSection?.id || "";
 
-      // Add error handler
-      const handleError = (e: Event) => {
-        console.error("[Listening] Audio error:", e);
-        toast.error("Failed to load audio. Please check your connection.");
-        setIsPlaying(false);
-      };
+    // Load the new source
+    audio.load();
 
-      audio.addEventListener("error", handleError);
-      audio.load();
+    // --- Event handlers ---
+    const handleLoadedMetadata = () => {
+      // Only seek if the audio still belongs to the section we intended
+      if (loadedAudioSectionRef.current !== sectionId) return;
 
-      const savedTime = audioTimesRef.current[currentSection?.id || ""] || 0;
-      audio.currentTime = savedTime;
-
-      const playAudio = async () => {
-        try {
-          await audio.play();
+      const savedTime = audioTimesRef.current[sectionId] ?? 0;
+      // Clamp to valid range so we don't overshoot a short track
+      if (savedTime > 0 && savedTime < audio.duration) {
+        audio.currentTime = savedTime;
+      }
+      // Now attempt autoplay
+      audio
+        .play()
+        .then(() => {
           setIsPlaying(true);
-        } catch (err) {
-          console.error("Audio autoplay failed:", err);
-          toast.warning("Click the play button to start audio");
+          setNeedsManualPlay(false);
+        })
+        .catch(() => {
+          // Autoplay blocked — surface a real Play button
           setIsPlaying(false);
-        }
-      };
+          setNeedsManualPlay(true);
+        });
+    };
 
-      playAudio();
+    const handlePlay = () => setIsPlaying(true);
+    const handlePause = () => {
+      // Only auto-resume if not paused intentionally (nav warning)
+      if (!audio.ended && !audio.seeking && !showNavWarning) {
+        setTimeout(() => {
+          audio.play().catch(console.error);
+        }, 100);
+      }
+      setIsPlaying(false);
+    };
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setAudioEnded(true);
+    };
+    const handleTimeUpdate = () => {
+      // Persist time in ref (no re-render)
+      if (loadedAudioSectionRef.current === sectionId) {
+        audioTimesRef.current[sectionId] = audio.currentTime;
+      }
+      if (audio.duration) {
+        setAudioProgress((audio.currentTime / audio.duration) * 100);
+      }
+    };
+    const handleError = () => {
+      toast.error("Failed to load audio. Please check your connection.");
+      setIsPlaying(false);
+    };
 
-      const handlePlay = () => setIsPlaying(true);
-      const handlePause = () => {
-        // Auto-resume if not ended or seeking
-        if (!audio.ended && !audio.seeking) {
-          setTimeout(() => {
-            audio.play().catch(console.error);
-          }, 100);
-        }
-        setIsPlaying(false);
-      };
-      const handleEnded = () => {
-        setIsPlaying(false);
-        setAudioEnded(true);
-      };
-      const handleTimeUpdate = () => {
-        if (currentSection?.id) {
-          audioTimesRef.current[currentSection.id] = audio.currentTime;
-        }
-        if (audio.duration) {
-          setAudioProgress((audio.currentTime / audio.duration) * 100);
-        }
-      };
+    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("pause", handlePause);
+    audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("error", handleError);
 
-      audio.addEventListener("play", handlePlay);
-      audio.addEventListener("pause", handlePause);
-      audio.addEventListener("ended", handleEnded);
-      audio.addEventListener("timeupdate", handleTimeUpdate);
-
-      return () => {
-        audio.removeEventListener("play", handlePlay);
-        audio.removeEventListener("pause", handlePause);
-        audio.removeEventListener("ended", handleEnded);
-        audio.removeEventListener("timeupdate", handleTimeUpdate);
-        audio.removeEventListener("error", handleError);
-      };
-    }
-  }, [moduleLoaded, sections.length, audioPath, currentSection?.id]);
+    return () => {
+      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("error", handleError);
+    };
+  }, [
+    moduleLoaded,
+    sections.length,
+    audioProxyUrl,
+    currentSection?.id,
+    showNavWarning,
+  ]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -411,12 +493,12 @@ export default function ListeningTestClient({
                     <Headphones className="h-10 w-10 text-blue-600" />
                   </div>
                 </div>
-                {audioPath ? (
+                {audioProxyUrl ? (
                   <>
                     <audio
                       ref={audioRef}
                       className="hidden"
-                      src={audioPath}
+                      src={audioProxyUrl}
                       preload="auto"
                       controlsList="nodownload noplaybackrate"
                       onContextMenu={(e) => e.preventDefault()}
@@ -451,9 +533,20 @@ export default function ListeningTestClient({
                           ></div>
                         </div>
                       </div>
+
+                      {/* Visible Play button shown when autoplay is blocked */}
+                      {needsManualPlay && (
+                        <button
+                          onClick={handleManualPlay}
+                          className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors mb-4"
+                        >
+                          <Play className="h-5 w-5" />
+                          Start Listening
+                        </button>
+                      )}
                     </div>
-                    <div className="rounded-lg bg-blue-50 p-4">
-                      <p className="text-sm text-blue-700">
+                    <div className="rounded-lg bg-red-50 p-4">
+                      <p className="text-sm text-red-700">
                         <strong>Note:</strong> The audio will play automatically
                         and cannot be paused. Listen carefully and answer the
                         questions.
@@ -525,6 +618,7 @@ export default function ListeningTestClient({
                             />
                           </div>
                         )}
+
                       {blocks.map((block, idx) => (
                         <RenderBlock
                           key={`${subSection.id}-${idx}`}

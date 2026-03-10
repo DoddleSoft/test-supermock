@@ -48,9 +48,14 @@ export interface TestStatus {
 }
 
 /**
- * Determine test status based on scheduled time and current status
+ * Determine test status based on scheduled time and current status.
+ * If hasJoined is true (student already entered the test), skip the
+ * 30-minute join cutoff so they can re-enter to continue.
  */
-export function getTestStatus(test: ScheduledTest): TestStatus {
+export function getTestStatus(
+  test: ScheduledTest,
+  hasJoined?: boolean,
+): TestStatus {
   const now = new Date();
   const scheduledTime = new Date(test.scheduled_at);
 
@@ -81,7 +86,15 @@ export function getTestStatus(test: ScheduledTest): TestStatus {
   }
 
   // Test started but join window closed (after 30 min)
+  // If the student already joined, allow re-entry as long as the test isn't over
   if (now >= joinCutoffTime && now < endTime) {
+    if (hasJoined) {
+      return {
+        status: "in_progress",
+        canJoin: true,
+        message: "Continue test",
+      };
+    }
     return {
       status: "in_progress",
       canJoin: false,

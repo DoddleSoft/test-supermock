@@ -230,11 +230,14 @@ export async function loadExamData(attemptId: string): Promise<{
       };
     }
 
+    // Strip sensitive fields (correct_answers, explanation) before sending to client
+    const sanitizedPaperData = sanitizePaperData(paperResult.data);
+
     return {
       success: true,
       data: {
         attemptData,
-        paperData: paperResult.data,
+        paperData: sanitizedPaperData,
         studentId: accessResult.studentId!,
       },
     };
@@ -245,4 +248,33 @@ export async function loadExamData(attemptId: string): Promise<{
       error: error.message || "Unknown error occurred",
     };
   }
+}
+
+/**
+ * Remove correct_answers and explanation from all questions
+ * so they are never serialised to the client.
+ */
+function sanitizePaperData(data: ModuleData): ModuleData {
+  const sanitizedModules: ModuleData["modules"] = {};
+
+  for (const [key, mod] of Object.entries(data.modules)) {
+    sanitizedModules[key] = {
+      ...mod,
+      sections: (mod.sections ?? []).map((section) => ({
+        ...section,
+        sub_sections: (section.sub_sections ?? []).map((sub) => ({
+          ...sub,
+          questions: (sub.questions ?? []).map(
+            ({ correct_answers, explanation, ...q }) => ({
+              ...q,
+              correct_answers: null,
+              explanation: null,
+            }),
+          ),
+        })),
+      })),
+    };
+  }
+
+  return { ...data, modules: sanitizedModules };
 }

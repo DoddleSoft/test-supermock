@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams, useParams } from "next/navigation";
 import { Loader2, RectangleEllipsis } from "lucide-react";
 import { joinMockTest } from "@/helpers/scheduledTests";
 import { authService } from "@/helpers/auth";
@@ -16,6 +16,7 @@ export default function JoinCenterPage() {
 
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { slug } = useParams<{ slug: string }>();
   const testId = searchParams.get("test");
 
   // Refs to manage focus for each input
@@ -107,20 +108,8 @@ export default function JoinCenterPage() {
         })),
       });
 
-      // Store attempt info in sessionStorage
-      sessionStorage.setItem("attemptId", result.attemptId);
-      sessionStorage.setItem("paperId", result.paperId);
-      sessionStorage.setItem("attemptStatus", result.status || "joined");
-
-      // Store module info (JSONB array from RPC)
-      sessionStorage.setItem("moduleIds", JSON.stringify(result.moduleIds));
-
-      // Get center slug from current path
-      const pathParts = window.location.pathname.split("/");
-      const centerSlug = pathParts[2]; // /mock-test/[slug]/exchange-code
-
       // Redirect to exam interface
-      router.push(`/mock-test/${centerSlug}/${result.attemptId}`);
+      router.push(`/mock-test/${slug}/${result.attemptId}`);
     } catch (err) {
       console.error("[ExchangeCode] Unexpected error:", err);
       setError("Connection failed. Please try again.");
@@ -135,14 +124,24 @@ export default function JoinCenterPage() {
 
     const newDigits = [...digits];
 
-    // Take the last character entered (in case user types multiple chars in one box)
-    const char = value.slice(-1);
-    newDigits[index] = char;
+    // Mobile autofill may inject the full code into one box
+    if (value.length > 1) {
+      const chars = value.split("").slice(0, 6);
+      chars.forEach((ch, i) => {
+        newDigits[i] = ch;
+      });
+      setDigits(newDigits);
+      setError("");
+      inputRefs.current[Math.min(chars.length, 5)]?.focus();
+      return;
+    }
+
+    newDigits[index] = value;
     setDigits(newDigits);
     setError("");
 
     // If a digit was added, move to next input
-    if (char && index < 5) {
+    if (value && index < 5) {
       inputRefs.current[index + 1]?.focus();
     }
   };
@@ -230,11 +229,12 @@ export default function JoinCenterPage() {
                   }}
                   type="text"
                   inputMode="numeric"
-                  maxLength={1}
+                  maxLength={6}
                   value={digit}
                   onChange={(e) => handleChange(index, e.target.value)}
                   onKeyDown={(e) => handleKeyDown(index, e)}
                   onPaste={handlePaste}
+                  autoComplete="one-time-code"
                   className={`w-10 h-12 sm:w-12 sm:h-14 text-center text-xl sm:text-2xl font-bold border rounded-lg outline-none transition-all duration-200
                     ${
                       error

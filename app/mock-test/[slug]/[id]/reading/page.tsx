@@ -1,4 +1,3 @@
-import { notFound } from "next/navigation";
 import { ExamProvider } from "@/context/ExamContext";
 import { loadExamData } from "@/app/actions/exam";
 import { validateScheduledTestAccess } from "@/utils/validateTestAccess";

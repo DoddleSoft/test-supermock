@@ -40,6 +40,7 @@ export async function proxy(request: NextRequest) {
     "/auth/register",
     "/auth/callback",
     "/auth/reset-password",
+    "/auth/update-password",
   ];
   const isPublicRoute = publicRoutes.some((route) =>
     pathname.startsWith(route),

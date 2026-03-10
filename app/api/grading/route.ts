@@ -11,49 +11,25 @@ import {
   AnswerUpdate,
   validateAnswer,
   calculateBandScore,
-  getModuleSubSectionIds,
   computeFinalTimeSpent,
   errorResponse,
 } from "@/helpers/grading";
 
 // ============================================================
-// GRADING ENGINE v2.1.0
+// GRADING ENGINE v2.2.0
 // Industry-grade IELTS grading API
 // Atomic, idempotent, secure, cheat-resistant
 // ============================================================
-//
-// PERFORMANCE & RELIABILITY OPTIMIZATIONS:
-//
-// 1. CONNECTION POOLING OPTIMIZATION
-//    - Database connections freed immediately after RPC call
-//    - Node.js performs all computation (Levenshtein, normalization) in-memory
-//    - DB not blocked during CPU-intensive grading calculations
-//
-// 2. NETWORK LATENCY REDUCTION
-//    - OLD: ~50+ round trips (answer upserts + updates + module update + flow)
-//    - NEW: Exactly 3 RPC calls total (upsert answers, commit grading, flow status)
-//    - Answer upsert: 1 call (was N/50 batches)
-//    - Grading commit: 1 atomic call (was 40+ individual updates + module update)
-//    - Flow control: 1 call (was 2-3 queries + potential update)
-//
-// 3. DATA INTEGRITY (ACID Transactions)
-//    - All grading operations wrapped in Postgres transactions
-//    - If server crashes mid-grading: ENTIRE operation rolls back
-//    - No more "completed status with half-graded answers"
-//    - Optimistic locking prevents concurrent grading conflicts
-//    - Guarantees: Atomicity, Consistency, Isolation, Durability
-//
-// 4. FETCH-ONCE, PROCESS IN-MEMORY, SAVE-ONCE PATTERN
-//    - Fetch all questions & student answers once
-//    - Grade completely in Node.js memory (fast JS engine)
-//    - Commit all results in single atomic transaction
-//    - Database only handles data storage, not computation
-//
-// ============================================================
 
-// Note: All type definitions, constants, normalization logic, matching engine,
-// band score calculations, and helper utilities have been moved to @/helpers/grading
-// for better modularity and maintainability.
+const MODULE_DURATIONS: Record<string, number> = {
+  listening: 30 * 60,
+  reading: 60 * 60,
+  writing: 60 * 60,
+  speaking: 15 * 60,
+};
+
+// Grace period beyond deadline to still accept submissions (seconds)
+const LATE_SUBMISSION_GRACE_SECONDS = 60;
 
 // ============================================================
 // MAIN GRADING API HANDLER
@@ -149,7 +125,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const moduleId = attemptModule.module_id;
 
     if (!moduleType) {
-      return errorResponse("Module type not found", 500);
+      return errorResponse("Module configuration error", 500);
     }
 
     // -------------------------------------------------------
@@ -186,10 +162,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       attemptModule.status !== "pending" &&
       attemptModule.status !== "timeout"
     ) {
-      return errorResponse(
-        `Cannot grade module with status "${attemptModule.status}". Must be in_progress, pending, or timeout.`,
-        400,
-      );
+      return errorResponse("Module is not in a gradable state", 400);
     }
 
     // -------------------------------------------------------
@@ -207,10 +180,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Prevent grading on already completed/abandoned attempts
     if (attempt.status === "completed" || attempt.status === "abandoned") {
-      return errorResponse(
-        `Cannot grade: attempt is already "${attempt.status}"`,
-        400,
-      );
+      return errorResponse("Cannot grade: attempt is no longer active", 400);
     }
 
     // Verify student owns this attempt
@@ -255,57 +225,141 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // -------------------------------------------------------
     // 5.5 SERVER-SIDE TIME VALIDATION (anti-cheat)
-    // Compute deadline from server-set started_at + module duration.
-    // This prevents clients from manipulating time_remaining_seconds.
+    // Computes deadline using both started_at + duration AND
+    // stored time_spent + time_remaining to handle reconnection
+    // and interrupted sessions robustly.
     // -------------------------------------------------------
-    const MODULE_DURATIONS: Record<string, number> = {
-      listening: 30 * 60,
-      reading: 60 * 60,
-      writing: 60 * 60,
-      speaking: 15 * 60,
-    };
-
-    let serverTimeRemaining = timeRemainingSeconds ?? 0;
+    let serverTimeRemaining = 0;
+    let isLateSubmission = false;
 
     if (attemptModule.started_at && moduleType) {
       const durationSec = MODULE_DURATIONS[moduleType] || 3600;
-      const deadlineMs =
-        new Date(attemptModule.started_at).getTime() + durationSec * 1000;
-      const serverRemaining = Math.max(
-        0,
-        Math.floor((deadlineMs - Date.now()) / 1000),
-      );
-      const GRACE_SECONDS = 60;
+      const startedAtMs = new Date(attemptModule.started_at).getTime();
 
-      // Always trust server-computed time over client-reported time
-      serverTimeRemaining = serverRemaining;
+      // Primary deadline: started_at + module duration
+      const absoluteDeadlineMs = startedAtMs + durationSec * 1000;
 
-      if (Date.now() > deadlineMs + GRACE_SECONDS * 1000) {
-        const overrunSec = Math.round((Date.now() - deadlineMs) / 1000);
-        console.warn(
-          `[Grading] SECURITY: Late submission for module ${attemptModuleId} (${moduleType}). ` +
-            `${overrunSec}s past deadline. started_at=${attemptModule.started_at}`,
-        );
+      // Adjusted deadline: use stored time_spent + time_remaining from DB
+      // This handles interrupted sessions where the timer was paused/synced.
+      // If time_remaining_seconds was last synced at time T, then:
+      //   T ≈ started_at + time_spent_seconds (wall clock since start)
+      //   Adjusted deadline = T + time_remaining_seconds
+      // For uninterrupted sessions: time_spent + time_remaining ≈ duration,
+      // so adjusted ≈ absolute. For interrupted sessions this is more accurate.
+      let effectiveDeadlineMs = absoluteDeadlineMs;
+
+      const storedTimeSpent = attemptModule.time_spent_seconds ?? 0;
+      const storedTimeRemaining = attemptModule.time_remaining_seconds;
+
+      if (
+        storedTimeRemaining !== null &&
+        storedTimeRemaining !== undefined &&
+        storedTimeSpent > 0
+      ) {
+        const lastSyncApproxMs = startedAtMs + storedTimeSpent * 1000;
+        const adjustedDeadlineMs =
+          lastSyncApproxMs + storedTimeRemaining * 1000;
+        // Use the more conservative (earlier) deadline for anti-cheat
+        effectiveDeadlineMs = Math.min(absoluteDeadlineMs, adjustedDeadlineMs);
       }
+
+      serverTimeRemaining = Math.max(
+        0,
+        Math.floor((effectiveDeadlineMs - Date.now()) / 1000),
+      );
 
       // Flag suspiciously high client-reported time remaining
       if (
         timeRemainingSeconds !== undefined &&
-        timeRemainingSeconds > serverRemaining + 30
+        timeRemainingSeconds > serverTimeRemaining + 30
       ) {
         console.warn(
           `[Grading] SECURITY: Client time remaining (${timeRemainingSeconds}s) exceeds ` +
-            `server computed (${serverRemaining}s) by ${timeRemainingSeconds - serverRemaining}s`,
+            `server computed (${serverTimeRemaining}s) by ${timeRemainingSeconds - serverTimeRemaining}s`,
         );
+      }
+
+      // REJECT late submissions beyond grace period
+      if (
+        Date.now() >
+        effectiveDeadlineMs + LATE_SUBMISSION_GRACE_SECONDS * 1000
+      ) {
+        const overrunSec = Math.round(
+          (Date.now() - effectiveDeadlineMs) / 1000,
+        );
+        console.warn(
+          `[Grading] SECURITY: Late submission REJECTED for module ${attemptModuleId} (${moduleType}). ` +
+            `${overrunSec}s past deadline. started_at=${attemptModule.started_at}`,
+        );
+        isLateSubmission = true;
       }
     }
 
     // -------------------------------------------------------
-    // 6. SAVE ANSWERS (atomic RPC upsert - single round trip)
+    // 5.6 HANDLE LATE SUBMISSIONS — save answers, mark as
+    //     timeout, and reject the grading request.
     // -------------------------------------------------------
+    if (isLateSubmission) {
+      // Still save whatever answers were submitted so data isn't lost
+      if (answers && answers.length > 0) {
+        const deduped = new Map<string, SubmittedAnswer>();
+        for (const ans of answers) {
+          const trimmedResponse =
+            typeof ans.student_response === "string"
+              ? ans.student_response.trim()
+              : (ans.student_response ?? "");
+          deduped.set(`${ans.reference_id}_${ans.question_ref}`, {
+            reference_id: ans.reference_id,
+            question_ref: ans.question_ref,
+            student_response: trimmedResponse,
+          });
+        }
+        const answersToSave = Array.from(deduped.values())
+          .filter((a) => a.reference_id && a.question_ref)
+          .map((a) => ({
+            reference_id: a.reference_id,
+            question_ref: a.question_ref,
+            student_response: a.student_response,
+          }));
+
+        if (answersToSave.length > 0) {
+          await supabase
+            .rpc("upsert_student_answers", {
+              p_attempt_module_id: attemptModuleId,
+              p_answers: answersToSave,
+            })
+            .then(({ error }) => {
+              if (error)
+                console.error(
+                  "[Grading] Late submission answer save failed:",
+                  error,
+                );
+            });
+        }
+      }
+
+      // Mark module as timeout so it cannot be resubmitted
+      await supabase
+        .from("attempt_modules")
+        .update({
+          status: "timeout",
+          completed_at: new Date().toISOString(),
+          time_remaining_seconds: 0,
+        })
+        .eq("id", attemptModuleId)
+        .eq("status", attemptModule.status);
+
+      return errorResponse(
+        "Submission rejected: the time limit for this module has expired",
+        403,
+      );
+    }
+
+    // -------------------------------------------------------
+    // 6. DEDUPLICATE SUBMITTED ANSWERS
+    // -------------------------------------------------------
+    const deduped = new Map<string, SubmittedAnswer>();
     if (answers && answers.length > 0) {
-      // Deduplicate: keep last occurrence per (reference_id, question_ref)
-      const deduped = new Map<string, SubmittedAnswer>();
       for (const ans of answers) {
         const trimmedResponse =
           typeof ans.student_response === "string"
@@ -317,39 +371,40 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           student_response: trimmedResponse,
         });
       }
-
-      const answersToSave = Array.from(deduped.values())
-        .filter((a) => a.reference_id && a.question_ref)
-        .map((a) => ({
-          reference_id: a.reference_id,
-          question_ref: a.question_ref,
-          student_response: a.student_response,
-        }));
-
-      if (answersToSave.length > 0) {
-        // Single atomic RPC call - replaces N database calls
-        const { error: upsertError } = await supabase.rpc(
-          "upsert_student_answers",
-          {
-            p_attempt_module_id: attemptModuleId,
-            p_answers: answersToSave,
-          },
-        );
-
-        if (upsertError) {
-          console.error("[Grading] Answer upsert RPC failed:", upsertError);
-          return errorResponse(
-            `Failed to save answers: ${upsertError.message}`,
-            500,
-          );
-        }
-      }
     }
 
     // -------------------------------------------------------
     // 7. WRITING MODULE — save only, no auto-grading
     // -------------------------------------------------------
     if (moduleType === "writing") {
+      // Save submitted answers
+      if (deduped.size > 0) {
+        const answersToSave = Array.from(deduped.values())
+          .filter((a) => a.reference_id && a.question_ref)
+          .map((a) => ({
+            reference_id: a.reference_id,
+            question_ref: a.question_ref,
+            student_response: a.student_response,
+          }));
+
+        if (answersToSave.length > 0) {
+          const { error: upsertError } = await supabase.rpc(
+            "upsert_student_answers",
+            {
+              p_attempt_module_id: attemptModuleId,
+              p_answers: answersToSave,
+            },
+          );
+          if (upsertError) {
+            console.error(
+              "[Grading] Writing answer upsert failed:",
+              upsertError,
+            );
+            return errorResponse("Failed to save answers", 500);
+          }
+        }
+      }
+
       const finalTimeSpent = computeFinalTimeSpent(
         attemptModule.started_at,
         attemptModule.time_spent_seconds,
@@ -396,64 +451,111 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // -------------------------------------------------------
-    // 8. FETCH ALL ANSWERS & CORRECT ANSWERS FOR GRADING
+    // 8. FETCH QUESTIONS (single query via FK join)
+    //    Replaces the two-step getModuleSubSectionIds + separate
+    //    question_answers query with one PostgREST join.
     // -------------------------------------------------------
-    // Read ALL student answers from DB (includes incrementally saved ones)
-    const { data: allStudentAnswers, error: fetchAnswersError } = await supabase
-      .from("student_answers")
-      .select(
-        "id, attempt_module_id, reference_id, question_ref, student_response",
-      )
-      .eq("attempt_module_id", attemptModuleId);
-
-    if (fetchAnswersError) {
-      return errorResponse(
-        `Failed to fetch answers: ${fetchAnswersError.message}`,
-        500,
-      );
-    }
-
-    // Get ALL question_answers for this module via sections → sub_sections
-    const subSectionIds = await getModuleSubSectionIds(supabase, moduleId);
-
-    if (subSectionIds.length === 0) {
-      return errorResponse("No sub-sections found for this module", 500);
-    }
-
     const { data: moduleQuestions, error: questionsError } = await supabase
       .from("question_answers")
-      .select("id, sub_section_id, question_ref, correct_answers, marks")
-      .in("sub_section_id", subSectionIds);
+      .select(
+        "id, sub_section_id, question_ref, correct_answers, options, marks, sub_sections!inner(id, sections!inner(module_id))",
+      )
+      .eq("sub_sections.sections.module_id", moduleId);
 
     if (questionsError) {
-      return errorResponse(
-        `Failed to fetch questions: ${questionsError.message}`,
-        500,
-      );
+      console.error("[Grading] Failed to fetch questions:", questionsError);
+      return errorResponse("Failed to load module questions", 500);
     }
 
     if (!moduleQuestions || moduleQuestions.length === 0) {
       return errorResponse("No questions found for this module", 500);
     }
 
-    // -------------------------------------------------------
-    // 9. GRADE ANSWERS (Listening & Reading)
-    // -------------------------------------------------------
+    // Build question lookup
     const questionMap = new Map<string, QuestionAnswer>();
     let totalModuleMarks = 0;
 
     for (const q of moduleQuestions) {
       const key = `${q.sub_section_id}_${q.question_ref}`;
-      questionMap.set(key, q as QuestionAnswer);
+      questionMap.set(key, {
+        id: q.id,
+        sub_section_id: q.sub_section_id,
+        question_ref: q.question_ref,
+        correct_answers: q.correct_answers,
+        options: q.options,
+        explanation: null,
+        marks: q.marks,
+      } as QuestionAnswer);
       totalModuleMarks += q.marks || 1;
     }
 
-    // Build student answer lookup
+    // -------------------------------------------------------
+    // 9. UPSERT ALL ANSWERS (submitted + unattempted placeholders)
+    //    - Merges submitted answers with placeholders for questions
+    //      that have no student response, ensuring every question
+    //      has a student_answers row for analytics & grading.
+    //    - The RPC returns ALL answer rows with IDs, eliminating
+    //      a separate read and avoiding read-after-write replica lag.
+    // -------------------------------------------------------
+    // Build the complete answer set: submitted + placeholders for unattempted
+    const completeAnswers = new Map<string, SubmittedAnswer>();
+
+    // Start with submitted answers (already deduplicated)
+    for (const [key, ans] of deduped) {
+      completeAnswers.set(key, ans);
+    }
+
+    // Add empty placeholders for unattempted questions
+    for (const [key, question] of questionMap) {
+      if (!completeAnswers.has(key)) {
+        completeAnswers.set(key, {
+          reference_id: question.sub_section_id,
+          question_ref: question.question_ref,
+          student_response: "",
+        });
+      }
+    }
+
+    const answersToUpsert = Array.from(completeAnswers.values())
+      .filter((a) => a.reference_id && a.question_ref)
+      .map((a) => ({
+        reference_id: a.reference_id,
+        question_ref: a.question_ref,
+        student_response: a.student_response,
+      }));
+
+    // Single RPC call: upserts answers and returns ALL rows with IDs
+    // This eliminates the read-after-write pattern that could hit replica lag
+    let allStudentAnswers: Array<{
+      id: string;
+      reference_id: string;
+      question_ref: string;
+      student_response: string | null;
+    }> = [];
+
+    if (answersToUpsert.length > 0) {
+      const { data: upsertedRows, error: upsertError } = await supabase.rpc(
+        "upsert_student_answers",
+        {
+          p_attempt_module_id: attemptModuleId,
+          p_answers: answersToUpsert,
+        },
+      );
+
+      if (upsertError) {
+        console.error("[Grading] Answer upsert RPC failed:", upsertError);
+        return errorResponse("Failed to save answers", 500);
+      }
+
+      allStudentAnswers = upsertedRows ?? [];
+    }
+
+    // Build student answer lookup from the RPC result (no separate DB read)
     const studentAnswerMap = new Map<
       string,
       { id: string; student_response: string }
     >();
-    for (const sa of allStudentAnswers || []) {
+    for (const sa of allStudentAnswers) {
       const key = `${sa.reference_id}_${sa.question_ref}`;
       studentAnswerMap.set(key, {
         id: sa.id,
@@ -461,6 +563,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
     }
 
+    // -------------------------------------------------------
+    // 10. GRADE ANSWERS (Listening & Reading)
+    // -------------------------------------------------------
     let correctCount = 0;
     let incorrectCount = 0;
     let unansweredCount = 0;
@@ -476,7 +581,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const studentAnswer = studentAnswerMap.get(key);
       const questionMarks = question.marks || 1;
 
-      // Unanswered — no penalty
+      // Every question should have a student_answer row now (from upsert)
+      // but handle edge case defensively
       if (
         !studentAnswer ||
         !studentAnswer.student_response ||
@@ -493,9 +599,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         continue;
       }
 
-      // No correct answer defined — skip (treat as unanswered)
+      // No correct answer defined — mark as incorrect (0 marks) and
+      // push update so the row is not left in an ungraded state
       if (!question.correct_answers) {
         unansweredCount++;
+        answerUpdates.push({
+          id: studentAnswer.id,
+          is_correct: false,
+          marks_awarded: 0,
+        });
         continue;
       }
 
@@ -503,6 +615,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         studentAnswer.student_response,
         question.correct_answers,
         questionMarks,
+        question.options,
       );
 
       if (result.isCorrect) {
@@ -528,7 +641,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // -------------------------------------------------------
-    // 10. CALCULATE BAND SCORE
+    // 11. CALCULATE BAND SCORE
     // -------------------------------------------------------
     const bandScore = calculateBandScore(totalScore, moduleType);
     const percentage =
@@ -543,13 +656,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
 
     // -------------------------------------------------------
-    // 11. ATOMIC GRADING COMMIT (single RPC - all or nothing)
+    // 12. ATOMIC GRADING COMMIT (single RPC - all or nothing)
     // -------------------------------------------------------
-    // This replaces multiple DB calls with ONE atomic transaction:
-    // - Updates all answer results (40+ rows)
-    // - Updates module stats
-    // - Uses optimistic locking
-    // - Ensures data integrity (no partial updates)
     const { data: commitResult, error: commitError } = await supabase.rpc(
       "commit_grading_results",
       {
@@ -571,7 +679,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (commitError) {
       console.error("[Grading] Atomic commit failed:", commitError);
 
-      // Handle specific concurrent modification gracefully
+      // Handle concurrent modification gracefully
       if (commitError.message?.includes("CONCURRENT_MODIFICATION")) {
         return errorResponse(
           "This module has already been graded or status changed",
@@ -579,10 +687,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      return errorResponse(
-        `Failed to commit grading: ${commitError.message}`,
-        500,
-      );
+      return errorResponse("Failed to commit grading results", 500);
     }
 
     console.log(
@@ -590,9 +695,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
 
     // -------------------------------------------------------
-    // 12. MODULE FLOW CONTROL (single RPC)
+    // 13. MODULE FLOW CONTROL (single RPC)
     // -------------------------------------------------------
-    // Use RPC to determine next module and completion status atomically
     const { data: flowResult, error: flowError } = await supabase.rpc(
       "get_attempt_flow_status",
       {
@@ -603,14 +707,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (flowError) {
       console.error("[Grading] Flow control RPC failed:", flowError);
-      // Don't fail the entire request, use defaults
     }
 
     const nextModuleType = flowResult?.next_module_type ?? null;
     const attemptCompleted = flowResult?.attempt_completed ?? false;
 
     // -------------------------------------------------------
-    // 13. RETURN RESULT
+    // 14. RETURN RESULT
     // -------------------------------------------------------
     const elapsed = Date.now() - startTime;
     console.log(
@@ -633,8 +736,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       alreadyGraded: false,
       gradingVersion: GRADING_VERSION,
     } satisfies GradingResult);
-  } catch (error: any) {
-    console.error("[Grading] Unexpected error:", error);
-    return errorResponse(error?.message || "Internal grading error", 500);
+  } catch (error: unknown) {
+    // Fix 8: Never expose internal error details to the client
+    const msg =
+      error instanceof Error ? error.message : "Unknown internal error";
+    console.error("[Grading] Unexpected error:", msg);
+    return errorResponse("An internal error occurred while grading", 500);
   }
 }

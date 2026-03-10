@@ -5,10 +5,11 @@ import { redirect } from "next/navigation";
 export default async function AuthCallbackPage({
   searchParams,
 }: {
-  searchParams: Promise<{ code?: string }>;
+  searchParams: Promise<{ code?: string; next?: string }>;
 }) {
   const params = await searchParams;
   const code = params.code;
+  const next = params.next;
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY;
 
@@ -46,6 +47,12 @@ export default async function AuthCallbackPage({
   if (!data.session) {
     console.error("No session after exchange");
     redirect("/auth/login?error=no_session");
+  }
+
+  // If a `next` path was provided (e.g. password recovery), redirect there
+  // Only allow paths starting with /auth/ to prevent open redirect
+  if (next && next.startsWith("/auth/")) {
+    redirect(next);
   }
 
   const email = data.session.user.email;

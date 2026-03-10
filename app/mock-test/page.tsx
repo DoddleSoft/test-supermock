@@ -6,10 +6,6 @@ import { authService } from "@/helpers/auth";
 import { Loader } from "@/component/ui/loader";
 import { toast } from "sonner";
 
-/**
- * Mock Test Hub - Redirects authenticated users to their center
- * This acts as an intermediary that gets the user's center and redirects them
- */
 export default function MockTestHub() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);

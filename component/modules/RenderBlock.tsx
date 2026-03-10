@@ -4,6 +4,11 @@ import React from "react";
 
 export type ThemeColor = "green" | "blue" | "purple";
 
+interface QuestionOption {
+  label: string;
+  text?: string;
+}
+
 export interface RenderBlockProps {
   block: {
     type: string;
@@ -117,11 +122,26 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
         // Check if options are single characters (A, B, C) or longer text
         const hasOptions = qData?.options && qData.options.length > 0;
 
+        const QuestionHeader = ({
+          qNum,
+          text,
+        }: {
+          qNum: number | string;
+          text: string;
+        }) => (
+          <div className="mb-2">
+            <span className="text-xs text-gray-600">
+              <span className="font-bold">{qNum}.</span>
+              {text ? ` ${text}` : ""}
+            </span>
+          </div>
+        );
+
         if (hasOptions) {
           const firstOption = qData!.options![0];
           const firstLabel =
             typeof firstOption === "string" ? firstOption : firstOption.label;
-          const isSingleChar = firstLabel.trim().length <= 2; // A, B, C, etc.
+          const isSingleChar = firstLabel.trim().length <= 3; // A, B, C, etc.
 
           if (isSingleChar) {
             // Render as dropdown for single-character options
@@ -158,15 +178,29 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
             );
           } else {
             // Render as radio buttons for multi-word options
+            const afterMatchPos = regex.lastIndex;
+            const remainingText = text.substring(afterMatchPos);
+            const nextPlaceholderIdx = remainingText.search(
+              /\{\{\d+\}(?:blanks|true-false|mcq)\}/,
+            );
+
+            const questionText = (
+              nextPlaceholderIdx >= 0
+                ? remainingText.substring(0, nextPlaceholderIdx)
+                : remainingText
+            ).trim();
+
+            // Advance regex index
+            regex.lastIndex =
+              nextPlaceholderIdx >= 0
+                ? afterMatchPos + nextPlaceholderIdx
+                : text.length;
+
             parts.push(
               <div key={`q-${qNum}`} className="my-4 pl-0">
-                {/* Question Number Display */}
-                <div className="mb-2">
-                  <span className="text-sm font-bold text-gray-900">
-                    {qNum}.
-                  </span>
-                </div>
-                <div className="space-y-2">
+                <QuestionHeader qNum={qNum} text={questionText} />
+
+                <div className="space-y-2 pl-4">
                   {qData!.options!.map((opt: any) => {
                     const value = typeof opt === "string" ? opt : opt.label;
                     const displayText =
@@ -177,7 +211,7 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
                     return (
                       <label
                         key={value}
-                        className="flex items-start gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
+                        className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
                       >
                         <input
                           type="radio"
@@ -185,9 +219,9 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
                           value={value}
                           checked={answers[qNum] === value}
                           onChange={(e) => onAnswerChange(qNum, e.target.value)}
-                          className={`mt-0.5 h-4 w-4 ${colors.radio} focus:ring-2`}
+                          className={`h-3 w-3 ${colors.radio} focus:ring-2`}
                         />
-                        <span className="text-sm text-gray-800 leading-relaxed">
+                        <span className="text-xs text-gray-800 leading-relaxed">
                           {displayText}
                         </span>
                       </label>
@@ -224,6 +258,10 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
               value={answers[qNum] || ""}
               onChange={(e) => onAnswerChange(qNum, e.target.value)}
               placeholder="___"
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="off"
+              autoComplete="off"
               className={`inline-block w-32 rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-900 focus:outline-none focus:ring-1 ${colors.focus}`}
             />
           </span>,

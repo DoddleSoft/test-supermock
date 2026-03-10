@@ -1876,6 +1876,7 @@ DECLARE
   v_test_status TEXT;
   v_attempt_id UUID;
   v_modules_json JSONB;
+  v_has_modules BOOLEAN;
 BEGIN
   SELECT t.paper_id, t.scheduled_at, t.otp, t.status, t.center_id
   INTO v_paper_id, v_scheduled_at, v_actual_otp, v_test_status, v_center_id
@@ -1890,10 +1891,6 @@ BEGIN
 
   IF v_actual_otp IS DISTINCT FROM p_otp THEN
     RAISE EXCEPTION 'Invalid OTP provided.';
-  END IF;
-
-  IF now() > (v_scheduled_at + interval '30 minutes') THEN
-    RAISE EXCEPTION 'Entry denied: The 30-minute entry window has closed.';
   END IF;
 
   SELECT sp.student_id INTO v_student_id
@@ -1913,6 +1910,20 @@ BEGIN
 
   IF v_attempt_id IS NULL THEN
     RAISE EXCEPTION 'Access Denied: You are not registered for this test.';
+  END IF;
+
+  -- Check if student already has modules (already joined before)
+  SELECT EXISTS(
+    SELECT 1 FROM attempt_modules existing
+    WHERE existing.attempt_id = v_attempt_id
+  ) INTO v_has_modules;
+
+  -- Only enforce the 30-minute entry window for FIRST-TIME joins.
+  -- If student already has modules, they are re-entering.
+  IF NOT v_has_modules THEN
+    IF now() > (v_scheduled_at + interval '30 minutes') THEN
+      RAISE EXCEPTION 'Entry denied: The 30-minute entry window has closed.';
+    END IF;
   END IF;
 
   INSERT INTO attempt_modules (attempt_id, module_id, status)
@@ -1956,7 +1967,7 @@ BEGIN
   RETURN QUERY SELECT
     v_attempt_id,
     v_paper_id,
-    'joined'::TEXT,
+    CASE WHEN v_has_modules THEN 'rejoined' ELSE 'joined' END,
     COALESCE(v_modules_json, '[]'::jsonb);
 END;
 $function$;
@@ -2155,31 +2166,34 @@ $function$;
 
 -- Function: Upsert student answers
 CREATE OR REPLACE FUNCTION public.upsert_student_answers(p_attempt_module_id uuid, p_answers jsonb)
-RETURNS integer
+RETURNS TABLE(id uuid, reference_id uuid, question_ref text, student_response text)
 LANGUAGE plpgsql
 SECURITY DEFINER
 AS $function$
-declare
-  v_inserted int := 0;
+#variable_conflict use_column
 begin
-  insert into student_answers (
+  -- Single INSERT with ON CONFLICT for atomic upsert
+  INSERT INTO student_answers (
     attempt_module_id,
     reference_id,
     question_ref,
     student_response
   )
-  select
+  SELECT
     p_attempt_module_id,
     (ans->>'reference_id')::uuid,
     ans->>'question_ref',
     ans->>'student_response'
-  from jsonb_array_elements(p_answers) as ans
-  on conflict (attempt_module_id, reference_id, question_ref)
-  do update set
-    student_response = excluded.student_response;
+  FROM jsonb_array_elements(p_answers) AS ans
+  ON CONFLICT (attempt_module_id, reference_id, question_ref)
+  DO UPDATE SET
+    student_response = EXCLUDED.student_response;
 
-  get diagnostics v_inserted = row_count;
-  return v_inserted;
+  -- Return ALL answer rows for this attempt module (submitted + previously saved)
+  RETURN QUERY
+  SELECT sa.id, sa.reference_id, sa.question_ref, sa.student_response
+  FROM student_answers sa
+  WHERE sa.attempt_module_id = p_attempt_module_id;
 end;
 $function$;
 
@@ -2244,6 +2258,22 @@ BEGIN
       'error_code', 'MODULE_COMPLETED',
       'module_status', v_attempt_module.status,
       'completed_at', v_attempt_module.completed_at
+    );
+  END IF;
+
+  -- Block access to modules that have expired (started + zero time remaining)
+  -- This catches the case where auto-submit failed but the timer ran out
+  IF v_attempt_module.status = 'in_progress'
+     AND v_attempt_module.started_at IS NOT NULL
+     AND COALESCE(v_attempt_module.time_remaining_seconds, 0) <= 0
+     AND COALESCE(v_attempt_module.time_spent_seconds, 0) > 0
+  THEN
+    RETURN json_build_object(
+      'allowed', false,
+      'error', 'This module has expired. Time ran out.',
+      'error_code', 'MODULE_EXPIRED',
+      'module_status', v_attempt_module.status,
+      'started_at', v_attempt_module.started_at
     );
   END IF;
 

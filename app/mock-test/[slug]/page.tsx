@@ -9,9 +9,11 @@ import {
   FileCheck,
   Headphones,
   MonitorX,
+  ChevronRight,
+  Clock,
+  Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ChevronRight, Clock, Calendar, Building2 } from "lucide-react";
 import Navbar from "@/component/landing/Navbar";
 import Footer from "@/component/landing/Footer";
 import { authService } from "@/helpers/auth";
@@ -24,7 +26,6 @@ import {
   toScheduledTest,
   fetchStudentRegisteredTests,
   type StudentRegisteredTest,
-  type ScheduledTest,
 } from "@/helpers/scheduledTests";
 
 const INSTRUCTIONS = [
@@ -80,10 +81,22 @@ export default function MockTestPage() {
   const [registeredTests, setRegisteredTests] = useState<
     StudentRegisteredTest[]
   >([]);
+  const [, setTick] = useState(0);
+
+  // Re-evaluate test statuses every second so countdowns and "Join Now"
+  // unlock automatically without requiring a manual page refresh.
+  useEffect(() => {
+    const interval = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
+    let ignore = false;
+
     const validateAccess = async () => {
       const access = await authService.getStudentAccess();
+
+      if (ignore) return;
 
       if (!access.success || !access.allowed) {
         if (access.error) {
@@ -103,6 +116,7 @@ export default function MockTestPage() {
         const { tests, error } = await fetchStudentRegisteredTests(
           access.userEmail,
         );
+        if (ignore) return;
         if (error) {
           toast.error(error);
         } else {
@@ -114,10 +128,19 @@ export default function MockTestPage() {
     };
 
     validateAccess();
+
+    return () => {
+      ignore = true;
+    };
   }, [router, slug]);
 
-  const handleJoinTest = (scheduledTestId: string) => {
-    router.push(`/mock-test/${slug}/exchange-code?test=${scheduledTestId}`);
+  const handleJoinTest = (scheduledTestId: string, attemptId?: string) => {
+    // If the student already joined, go directly to the waiting room
+    if (attemptId) {
+      router.push(`/mock-test/${slug}/${attemptId}`);
+    } else {
+      router.push(`/mock-test/${slug}/exchange-code?test=${scheduledTestId}`);
+    }
   };
 
   if (isLoading) {
@@ -141,7 +164,8 @@ export default function MockTestPage() {
             <div className="grid gap-6 md:grid-cols-2">
               {registeredTests.map((rTest) => {
                 const scheduled = toScheduledTest(rTest);
-                const testStatus = getTestStatus(scheduled);
+                const hasJoined = !!rTest.started_at;
+                const testStatus = getTestStatus(scheduled, hasJoined);
                 return (
                   <div
                     key={rTest.attempt_id}
@@ -153,41 +177,32 @@ export default function MockTestPage() {
                         <h3 className="text-xl font-bold text-gray-900 mb-2">
                           {rTest.test_title}
                         </h3>
-                        {rTest.paper_type && (
-                          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 border border-red-200">
-                            {rTest.paper_type}
-                          </span>
-                        )}
                       </div>
-                      <span
-                        className={`px-3 py-1.5 text-xs font-bold rounded-full border-2 ${getStatusBadgeColor(testStatus.status)}`}
-                      >
-                        {testStatus.status === "in_progress"
-                          ? "LIVE"
-                          : testStatus.status === "completed"
-                            ? "COMPLETED"
-                            : testStatus.status === "cancelled"
-                              ? "CANCELLED"
-                              : "SCHEDULED"}
-                      </span>
-                    </div>
-
-                    {/* Paper Info */}
-                    <div className="mb-3">
-                      <p className="text-sm text-gray-500">
-                        Paper:{" "}
-                        <span className="font-semibold text-gray-800">
-                          {rTest.paper_title}
+                      <div className="flex gap-3">
+                        {rTest.paper_type && (
+                          <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 border border-red-200">
+                            {rTest.paper_type}
+                          </div>
+                        )}
+                        <span
+                          className={`px-3 py-1.5 text-xs font-bold rounded-full border-2 ${getStatusBadgeColor(testStatus.status)}`}
+                        >
+                          {testStatus.status === "in_progress"
+                            ? "LIVE"
+                            : testStatus.status === "completed"
+                              ? "COMPLETED"
+                              : testStatus.status === "cancelled"
+                                ? "CANCELLED"
+                                : "SCHEDULED"}
                         </span>
-                      </p>
+                      </div>
                     </div>
 
                     {/* Details Grid */}
-                    <div className="space-y-3 mb-5 bg-gray-50 rounded-lg p-4">
+                    <div className="space-y-5 mb-5 bg-gray-50 rounded-lg p-4">
                       <div className="flex items-center gap-3 text-gray-700">
                         <Calendar className="h-5 w-5 text-blue-600" />
                         <div>
-                          <p className="text-xs text-gray-500">Date</p>
                           <p className="font-semibold">
                             {formatTestDate(rTest.scheduled_at)}
                           </p>
@@ -196,29 +211,22 @@ export default function MockTestPage() {
                       <div className="flex items-center gap-3 text-gray-700">
                         <Clock className="h-5 w-5 text-green-600" />
                         <div>
-                          <p className="text-xs text-gray-500">
-                            Time & Duration
-                          </p>
                           <p className="font-semibold">
-                            {formatTestTime(rTest.scheduled_at)} •{" "}
+                            Time: {formatTestTime(rTest.scheduled_at)} /{" "}
                             {rTest.duration_minutes} min
                           </p>
                         </div>
                       </div>
-                      {rTest.center_name && (
-                        <div className="flex items-center gap-3 text-gray-700">
-                          <Building2 className="h-5 w-5 text-orange-600" />
-                          <div>
-                            <p className="text-xs text-gray-500">Test Center</p>
-                            <p className="font-semibold">{rTest.center_name}</p>
-                          </div>
-                        </div>
-                      )}
                     </div>
 
                     {/* Action Button */}
                     <button
-                      onClick={() => handleJoinTest(rTest.scheduled_test_id)}
+                      onClick={() =>
+                        handleJoinTest(
+                          rTest.scheduled_test_id,
+                          hasJoined ? rTest.attempt_id : undefined,
+                        )
+                      }
                       disabled={!testStatus.canJoin}
                       className={`w-full py-3 px-4 rounded-xl font-bold text-sm transition-all duration-200 ${
                         testStatus.canJoin
@@ -228,7 +236,9 @@ export default function MockTestPage() {
                     >
                       {testStatus.canJoin ? (
                         <span className="flex items-center justify-center gap-2">
-                          <span>Join Now</span>
+                          <span>
+                            {hasJoined ? "Continue Test" : "Join Now"}
+                          </span>
                           <ChevronRight className="h-5 w-5" />
                         </span>
                       ) : (

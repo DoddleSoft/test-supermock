@@ -8,6 +8,53 @@ import {
   levenshteinDistance,
 } from "./normalization";
 
+function normalizeChoiceToken(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function optionIndexFromLabel(value: string): number | null {
+  const token = normalizeChoiceToken(value);
+  if (!token) return null;
+
+  if (token.length === 1) {
+    const code = token.charCodeAt(0);
+    if (code >= 97 && code <= 122) {
+      return code - 97;
+    }
+  }
+
+  return null;
+}
+
+function resolveOptionValue(response: string, options?: unknown): string {
+  if (!Array.isArray(options) || options.length === 0) {
+    return response;
+  }
+
+  const trimmedResponse = response.trim();
+  if (!trimmedResponse) {
+    return response;
+  }
+
+  const normalizedResponse = normalizeText(trimmedResponse);
+  const labelIndex = optionIndexFromLabel(trimmedResponse);
+  if (labelIndex !== null && labelIndex < options.length) {
+    return String(options[labelIndex]);
+  }
+
+  for (const option of options) {
+    const optionText = String(option);
+    if (
+      matchSingleAnswer(normalizedResponse, optionText) ||
+      matchSingleAnswer(trimmedResponse, optionText)
+    ) {
+      return optionText;
+    }
+  }
+
+  return trimmedResponse;
+}
+
 /**
  * Flexible article handling: accept with/without "the", "a", "an"
  */
@@ -68,6 +115,7 @@ export function validateAnswer(
   studentResponse: string | string[],
   correctAnswers: any,
   marks: number = 1,
+  options?: unknown,
 ): { isCorrect: boolean; marksAwarded: number } {
   // Parse student response if JSON-encoded
   let parsedResponse = studentResponse;
@@ -86,6 +134,7 @@ export function validateAnswer(
   if (Array.isArray(parsedResponse)) {
     if (Array.isArray(correctAnswers)) {
       const normalizedStudent = parsedResponse
+        .map((a) => resolveOptionValue(String(a), options))
         .map((a) => normalizeText(String(a)))
         .filter(Boolean)
         .sort();
@@ -112,7 +161,7 @@ export function validateAnswer(
     typeof parsedResponse === "string"
       ? parsedResponse
       : String(parsedResponse);
-  const trimmed = responseStr.trim();
+  const trimmed = resolveOptionValue(responseStr, options).trim();
   if (!trimmed) return { isCorrect: false, marksAwarded: 0 };
 
   // Check against array of correct answers (accept any one)

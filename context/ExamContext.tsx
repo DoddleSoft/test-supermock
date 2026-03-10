@@ -126,6 +126,13 @@ interface ExamContextType extends ExamState {
     subSectionId: string,
     response: string | string[],
   ) => void;
+  submitMultipleAnswers: (
+    answers: Array<{
+      questionRef: string;
+      subSectionId: string;
+      response: string | string[];
+    }>,
+  ) => void;
   toggleFlag: (questionRef: string, subSectionId: string) => void;
   startTimer: (durationMinutes: number) => void;
   stopTimer: () => void;
@@ -159,6 +166,7 @@ interface RpcSubSection {
   sub_type: string | null;
   resource_url: string | null;
   boundary_text: string | null;
+  instruction: string | null;
   questions: RpcQuestion[];
 }
 
@@ -395,6 +403,7 @@ export function ExamProvider({
               : `${subSection.resource_url}`
             : null,
           boundary_text: subSection.boundary_text ?? null,
+          instruction: subSection.instruction ?? null,
           sub_section_index: subSection.sub_section_index ?? idx + 1,
           questions: (subSection.questions || []).map((q: any) => ({
             id: q.id,
@@ -810,8 +819,11 @@ export function ExamProvider({
         for (let attempt = previousAttempts; attempt < maxAttempts; attempt++) {
           loadExamAttemptsRef.current[attemptId] = attempt + 1;
           try {
-            const cacheKey = `exam_payload_${attemptId}`;
+            const cacheKey = `exam_payload_v2_${attemptId}`;
             const cached = localStorage.getItem(cacheKey);
+
+            // Clean up old cache format
+            localStorage.removeItem(`exam_payload_${attemptId}`);
 
             if (cached) {
               const parsed = JSON.parse(cached) as RpcExamPayload;
@@ -838,14 +850,6 @@ export function ExamProvider({
                   instruction: mod.instruction ?? null,
                 }));
 
-                if (parsed.paper?.id) {
-                  sessionStorage.setItem("paperId", parsed.paper.id);
-                }
-
-                (parsed.modules || []).forEach((mod) => {
-                  sessionStorage.setItem(`${mod.module_type}ModuleId`, mod.id);
-                });
-
                 setState((prev) => ({
                   ...prev,
                   attemptId,
@@ -863,10 +867,23 @@ export function ExamProvider({
             let rpcData: any = null;
             let rpcError: any = null;
 
+            // Get paperId from mock_attempts table (single source of truth)
+            const { data: attemptRow, error: attemptError } = await supabase
+              .from("mock_attempts")
+              .select("paper_id")
+              .eq("id", attemptId)
+              .single();
+
+            if (attemptError || !attemptRow?.paper_id) {
+              throw new Error(
+                `Failed to resolve paper for this attempt. ${attemptError?.message || ""}`,
+              );
+            }
+
             // Use new load_paper_with_modules RPC
             const { data: paperData, error: paperError } = await supabase.rpc(
               "load_paper_with_modules",
-              { p_paper_id: sessionStorage.getItem("paperId") },
+              { p_paper_id: attemptRow.paper_id },
             );
 
             if (paperError || !paperData) {
@@ -915,12 +932,8 @@ export function ExamProvider({
               instruction: mod.instruction ?? null,
             }));
 
-            modulesArray.forEach((mod) => {
-              sessionStorage.setItem(`${mod.module_type}ModuleId`, mod.id);
-            });
-
             // Cache the successful payload
-            const payloadCacheKey = `exam_payload_${attemptId}`;
+            const payloadCacheKey = `exam_payload_v2_${attemptId}`;
             try {
               localStorage.setItem(
                 payloadCacheKey,
@@ -1055,7 +1068,7 @@ export function ExamProvider({
             title: subSection.sub_type ?? null,
             sub_section_index: index + 1,
             question_type: subSection.sub_type ?? null,
-            instruction: null,
+            instruction: subSection.instruction ?? null,
             content_template: subSection.content_template ?? null,
             resource_url: subSection.resource_url ?? null,
             boundary_text: subSection.boundary_text ?? null,
@@ -1243,6 +1256,38 @@ export function ExamProvider({
     [debouncedSave], // Only depends on the debounced function
   );
 
+  // Submit multiple answers in a single state update (prevents re-render thrashing)
+  const submitMultipleAnswers = useCallback(
+    (
+      answersArray: Array<{
+        questionRef: string;
+        subSectionId: string;
+        response: string | string[];
+      }>,
+    ) => {
+      if (!answersArray.length) return;
+
+      setState((prev) => {
+        const newAnswers = new Map(prev.answers);
+        for (const { questionRef, subSectionId, response } of answersArray) {
+          if (!questionRef || !subSectionId) continue;
+          const key = `${subSectionId}_${questionRef}`;
+          newAnswers.set(key, {
+            question_ref: questionRef,
+            sub_section_id: subSectionId,
+            student_response: response,
+            timestamp: Date.now(),
+            is_flagged: newAnswers.get(key)?.is_flagged || false,
+          });
+        }
+        return { ...prev, answers: newAnswers };
+      });
+
+      debouncedSave();
+    },
+    [debouncedSave],
+  );
+
   // Toggle flag
   const toggleFlag = useCallback(
     (questionRef: string, subSectionId: string) => {
@@ -1322,6 +1367,7 @@ export function ExamProvider({
         loadModule,
         setCurrentSection,
         submitAnswer,
+        submitMultipleAnswers,
         toggleFlag,
         startTimer,
         stopTimer,

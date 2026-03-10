@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BookOpen,
@@ -26,11 +26,6 @@ interface WaitingRoomClientProps {
   }>;
 }
 
-interface ModuleStatus {
-  module_id: string;
-  status: "pending" | "not_started" | "in_progress" | "completed";
-}
-
 export default function WaitingRoomClient({
   attemptId,
   centerSlug,
@@ -45,120 +40,133 @@ export default function WaitingRoomClient({
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
-  // Fetch module statuses from database
+  // Refs for unmount safety
+  const isMountedRef = useRef(true);
+  const redirectTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cleanup on unmount
   useEffect(() => {
-    const fetchModuleStatuses = async () => {
-      try {
-        const supabase = createClient();
-
-        console.log(
-          "[WaitingRoom] Fetching module statuses for attempt:",
-          attemptId,
-        );
-
-        // Fetch all attempt_modules for this attempt (created by join_mock_test RPC)
-        const { data, error } = await supabase
-          .from("attempt_modules")
-          .select("module_id, status, module_type")
-          .eq("attempt_id", attemptId)
-          .order("module_type");
-
-        if (error) {
-          console.error("[WaitingRoom] Database error:", {
-            message: error.message,
-            details: error.details,
-            hint: error.hint,
-            code: error.code,
-            attemptId,
-          });
-
-          setHasError(true);
-          setErrorMessage(
-            "Failed to load test data. Please refresh the page or contact support.",
-          );
-          setIsLoading(false);
-          return;
-        }
-
-        // Critical validation: Modules MUST exist (created by join_mock_test RPC)
-        if (!data || data.length === 0) {
-          console.error(
-            "[WaitingRoom] CRITICAL: No attempt_modules found for attempt:",
-            attemptId,
-          );
-          console.error(
-            "[WaitingRoom] This means join_mock_test RPC failed to create modules",
-          );
-          console.error(
-            "[WaitingRoom] Check if:",
-            "\n  1. join_mock_test.sql is deployed to database",
-            "\n  2. Paper has modules assigned (listening/reading/writing)",
-            "\n  3. RPC executed successfully during OTP validation",
-          );
-
-          // Try to get info from sessionStorage as fallback
-          const storedModules = sessionStorage.getItem("moduleIds");
-          if (storedModules) {
-            console.warn(
-              "[WaitingRoom] Found modules in sessionStorage but not in database:",
-              storedModules,
-            );
-          }
-
-          setHasError(true);
-          setErrorMessage(
-            "Test modules not found. The test may not have been set up correctly. Please try joining again or contact support with attempt ID: " +
-              attemptId,
-          );
-          setIsLoading(false);
-          return;
-        }
-
-        // Build status map (module_id -> status)
-        const statusMap: Record<string, string> = {};
-        data.forEach((item: ModuleStatus & { module_type?: string }) => {
-          statusMap[item.module_id] = item.status;
-        });
-
-        console.log("[WaitingRoom] Module statuses loaded successfully:", {
-          attemptId,
-          modulesFound: data.length,
-          moduleTypes: data.map((m: any) => m.module_type).join(", "),
-          statuses: data.map((m: any) => `${m.module_type}:${m.status}`),
-        });
-
-        setModuleStatuses(statusMap);
-
-        // Check if ALL modules are completed - if so, redirect to profile
-        const allCompleted = data.every(
-          (m: ModuleStatus) => m.status === "completed",
-        );
-        if (allCompleted && data.length > 0) {
-          console.log(
-            "[WaitingRoom] All modules completed, redirecting to profile page",
-          );
-          setTimeout(() => {
-            router.push(`/mock-test/${centerSlug}/profile`);
-          }, 1500);
-        }
-      } catch (error) {
-        console.error("[WaitingRoom] Unexpected error:", error);
-        setHasError(true);
-        setErrorMessage("An unexpected error occurred. Please try again.");
-      } finally {
-        setIsLoading(false);
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (redirectTimerRef.current) {
+        clearTimeout(redirectTimerRef.current);
       }
     };
+  }, []);
 
+  // Fetch module statuses — extracted as a callback so we can re-call
+  // on visibilitychange (bfcache / tab switch)
+  const fetchModuleStatuses = useCallback(async () => {
+    try {
+      const supabase = createClient();
+
+      const { data, error } = await supabase
+        .from("attempt_modules")
+        .select("module_id, status, module_type")
+        .eq("attempt_id", attemptId)
+        .order("module_type");
+
+      // Bail if component unmounted while awaiting
+      if (!isMountedRef.current) return;
+
+      if (error) {
+        console.error("[WaitingRoom] Database error:", error);
+        setHasError(true);
+        setErrorMessage(
+          "Failed to load test data. Please refresh the page or contact support.",
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      if (!data || data.length === 0) {
+        console.error(
+          "[WaitingRoom] CRITICAL: No attempt_modules found for attempt:",
+          attemptId,
+        );
+        setHasError(true);
+        setErrorMessage(
+          "Test modules not found. The test may not have been set up correctly. Please try joining again or contact support with attempt ID: " +
+            attemptId,
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      // Build status map
+      const statusMap: Record<string, string> = {};
+      data.forEach((item: { module_id: string; status: string }) => {
+        statusMap[item.module_id] = item.status;
+      });
+
+      if (!isMountedRef.current) return;
+      setModuleStatuses(statusMap);
+
+      // Only redirect to profile when ALL expected modules are completed.
+      // Compare against the server-provided modules array to avoid
+      // false positives if the DB returns a partial set.
+      const expectedCount = modules.length;
+      const completedCount = data.filter(
+        (m: { status: string }) => m.status === "completed",
+      ).length;
+
+      if (
+        expectedCount > 0 &&
+        completedCount >= expectedCount &&
+        data.length >= expectedCount
+      ) {
+        console.log(
+          "[WaitingRoom] All modules completed, redirecting to profile page",
+        );
+        if (isMountedRef.current) {
+          redirectTimerRef.current = setTimeout(() => {
+            if (isMountedRef.current) {
+              router.push(`/mock-test/${centerSlug}/profile`);
+            }
+          }, 1500);
+        }
+      }
+    } catch (error) {
+      console.error("[WaitingRoom] Unexpected error:", error);
+      if (isMountedRef.current) {
+        setHasError(true);
+        setErrorMessage("An unexpected error occurred. Please try again.");
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
+    }
+  }, [attemptId, modules.length, router, centerSlug]);
+
+  // Initial fetch on mount
+  useEffect(() => {
     fetchModuleStatuses();
 
     // Slight delay for smooth transition
     const timer = setTimeout(() => {
-      setIsReady(true);
+      if (isMountedRef.current) {
+        setIsReady(true);
+      }
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [attemptId, router, centerSlug]);
+  }, [fetchModuleStatuses]);
+
+  // Re-fetch when the page becomes visible again (handles bfcache,
+  // browser back-button, and tab switching)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchModuleStatuses();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibility);
+  }, [fetchModuleStatuses]);
 
   const getModuleIcon = (type: string) => {
     switch (type) {
@@ -190,23 +198,7 @@ export default function WaitingRoomClient({
     }
   };
 
-  const handleStartModule = (
-    moduleId: string,
-    moduleType: string,
-    status?: string,
-  ) => {
-    // Don't allow navigation to completed modules
-    if (status === "completed") {
-      console.log(
-        `[WaitingRoom] Module ${moduleType} is completed, cannot re-enter`,
-      );
-      return;
-    }
-
-    console.log(
-      `[WaitingRoom] Navigating to ${moduleType} module (status: ${status || "pending"})`,
-    );
-
+  const handleStartModule = (moduleId: string, moduleType: string) => {
     // Navigate to module-specific route
     router.push(`/mock-test/${centerSlug}/${attemptId}/${moduleType}`);
   };
@@ -278,9 +270,7 @@ export default function WaitingRoomClient({
             return (
               <button
                 key={module.id}
-                onClick={() =>
-                  handleStartModule(module.id, module.module_type, status)
-                }
+                onClick={() => handleStartModule(module.id, module.module_type)}
                 disabled={isCompleted}
                 className={`group relative overflow-hidden rounded-xl border-2 bg-white p-6 text-left transition-all duration-300 ${
                   isCompleted

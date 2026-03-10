@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle } from "lucide-react";
@@ -11,7 +11,6 @@ import {
   getModuleAnswersFromStorage,
 } from "@/utils/answerStorage";
 import { syncStoredAnswersToDatabase } from "@/helpers/answerSync";
-import { buildBlocks } from "@/helpers/contentBlocks";
 import Image from "next/image";
 
 interface WritingTestClientProps {
@@ -24,10 +23,12 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
     modules,
     currentModule,
     sections,
+    subSections,
     timeLeft,
     currentSectionIndex,
     setCurrentSection,
     loadModule,
+    submitAnswer,
     attemptId,
     currentAttemptModule,
     submitModule,
@@ -39,6 +40,27 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
   const [moduleLoaded, setModuleLoaded] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [wordCounts, setWordCounts] = useState<Record<string, number>>({});
+  const submitRedirectTimer = useRef<NodeJS.Timeout | null>(null);
+  const autoSubmitRedirectTimer = useRef<NodeJS.Timeout | null>(null);
+  // Debounce timer for localStorage writes
+  const storageDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  // Keep latest answers in a ref so the debounced callback always sees fresh data
+  const pendingStorageRef = useRef<{
+    sectionId: string;
+    value: string;
+    essayNumber: number;
+  } | null>(null);
+
+  // Cleanup all timers on unmount
+  useEffect(() => {
+    return () => {
+      if (submitRedirectTimer.current)
+        clearTimeout(submitRedirectTimer.current);
+      if (autoSubmitRedirectTimer.current)
+        clearTimeout(autoSubmitRedirectTimer.current);
+      if (storageDebounceRef.current) clearTimeout(storageDebounceRef.current);
+    };
+  }, []);
 
   // Load the writing module on mount
   useEffect(() => {
@@ -63,6 +85,8 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
           const answerMap: Record<string, string> = {};
           storedAnswers.forEach((a) => {
             answerMap[a.referenceId] = a.studentResponse;
+            // Sync to ExamContext so global state is consistent
+            submitAnswer(a.questionRef, a.referenceId, a.studentResponse);
           });
           setAnswers(answerMap);
         }
@@ -95,15 +119,32 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [currentAttemptModule, attemptId]);
 
+  // Periodic auto-save to database every 60 seconds
+  useEffect(() => {
+    if (!currentAttemptModule?.id || !attemptId) return;
+    const amId = currentAttemptModule.id;
+
+    const interval = setInterval(() => {
+      syncStoredAnswersToDatabase(attemptId, amId).catch((err) =>
+        console.error("Auto-save failed:", err),
+      );
+    }, 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, [currentAttemptModule?.id, attemptId]);
+
   // Handle auto-submit dialog → navigate to waiting room
   useEffect(() => {
     if (showSubmitDialog && submitDialogMessage) {
       setIsSubmitting(true);
-      const timer = setTimeout(() => {
+      autoSubmitRedirectTimer.current = setTimeout(() => {
         dismissSubmitDialog();
         router.push(`/mock-test/${slug}/${attemptId}`);
       }, 3000);
-      return () => clearTimeout(timer);
+      return () => {
+        if (autoSubmitRedirectTimer.current)
+          clearTimeout(autoSubmitRedirectTimer.current);
+      };
     }
   }, [
     showSubmitDialog,
@@ -116,30 +157,58 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
 
   const currentSection = sections[currentSectionIndex];
 
-  const handleAnswerChange = (sectionId: string, value: string) => {
-    setAnswers((prev) => ({ ...prev, [sectionId]: value }));
-
-    // Count words
-    const wordCount = value.trim().split(/\s+/).filter(Boolean).length;
-    setWordCounts((prev) => ({ ...prev, [sectionId]: wordCount }));
-
-    // Save to localStorage
-    if (attemptId && currentModule?.id) {
-      // Find the section index to determine essay number
-      const sectionIdx = sections.findIndex((s) => s.id === sectionId);
-      const essayNumber = sectionIdx + 1;
-
+  // Flush any pending debounced storage write immediately
+  const flushPendingStorage = useCallback(() => {
+    if (storageDebounceRef.current) {
+      clearTimeout(storageDebounceRef.current);
+      storageDebounceRef.current = null;
+    }
+    const pending = pendingStorageRef.current;
+    if (pending && attemptId && currentModule?.id) {
       updateAnswerInStorage(attemptId, currentModule.id, {
-        questionRef: `essay ${essayNumber}`, // essay 1, essay 2, etc.
-        referenceId: sectionId, // section_id for writing
-        studentResponse: value,
+        questionRef: `essay ${pending.essayNumber}`,
+        referenceId: pending.sectionId,
+        studentResponse: pending.value,
         moduleType: "writing",
         timestamp: Date.now(),
       });
+      pendingStorageRef.current = null;
+    }
+  }, [attemptId, currentModule?.id]);
+
+  const handleAnswerChange = (sectionId: string, value: string) => {
+    // 1. Update React state instantly — typing stays smooth
+    setAnswers((prev) => ({ ...prev, [sectionId]: value }));
+
+    // 2. Word count (lightweight regex — negligible at 200 words)
+    const wordCount = value.trim().split(/\s+/).filter(Boolean).length;
+    setWordCounts((prev) => ({ ...prev, [sectionId]: wordCount }));
+
+    // 3. Keep ExamContext in sync so global submission works
+    const sectionIdx = sections.findIndex((s) => s.id === sectionId);
+    const essayNumber = sectionIdx + 1;
+    submitAnswer(`essay ${essayNumber}`, sectionId, value);
+
+    // 4. Debounced localStorage write — fires 500ms after last keystroke
+    if (attemptId && currentModule?.id) {
+      pendingStorageRef.current = { sectionId, value, essayNumber };
+
+      if (storageDebounceRef.current) clearTimeout(storageDebounceRef.current);
+      storageDebounceRef.current = setTimeout(() => {
+        const pending = pendingStorageRef.current;
+        if (pending && attemptId && currentModule?.id) {
+          updateAnswerInStorage(attemptId, currentModule.id, {
+            questionRef: `essay ${pending.essayNumber}`,
+            referenceId: pending.sectionId,
+            studentResponse: pending.value,
+            moduleType: "writing",
+            timestamp: Date.now(),
+          });
+          pendingStorageRef.current = null;
+        }
+      }, 500);
     }
   };
-
-  // Auto-save is handled by localStorage — no periodic DB push needed.
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -160,7 +229,10 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
 
     setIsSubmitting(true);
 
-    // First sync local storage to database
+    // Flush any pending debounced write before syncing
+    flushPendingStorage();
+
+    // Sync local storage to database
     if (attemptId) {
       await syncStoredAnswersToDatabase(attemptId, currentAttemptModule.id);
     }
@@ -168,7 +240,7 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
     try {
       const result = await submitModule();
       if (result.success) {
-        setTimeout(() => {
+        submitRedirectTimer.current = setTimeout(() => {
           router.push(`/mock-test/${slug}/${attemptId}`);
         }, 1500);
       }
@@ -237,6 +309,21 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
                     />
                   </div>
                 )}
+
+              {/* Sub-section instructions */}
+              {subSections
+                .filter(
+                  (ss) =>
+                    ss.section_id === currentSection?.id && ss.instruction,
+                )
+                .map((ss) => (
+                  <p
+                    key={ss.id}
+                    className="mb-4 rounded-lg p-3 text-xs italic whitespace-pre-wrap bg-purple-50 text-purple-900"
+                  >
+                    {ss.instruction}
+                  </p>
+                ))}
 
               {currentSection?.subtext && (
                 <div className="bg-red-50 border-l-4 border-red-400 p-4 rounded-lg">

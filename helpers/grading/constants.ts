@@ -2,7 +2,7 @@
 // CONSTANTS FOR GRADING ENGINE
 // ============================================================
 
-export const GRADING_VERSION = "2.1.0";
+export const GRADING_VERSION = "2.2.0";
 
 // ============================================================
 // NUMBER ↔ WORD NORMALIZATION MAP

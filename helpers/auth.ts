@@ -533,29 +533,21 @@ class AuthService {
    */
   async resetPassword(email: string): Promise<AuthResponse> {
     try {
-      const siteUrl =
-        process.env.NEXT_PUBLIC_SITE_URL ??
-        (typeof window !== "undefined" ? window.location.origin : "");
+      // 1. Get the domain the student is actually on right now
+      const studentDomain =
+        typeof window !== "undefined" ? window.location.origin : "";
+
+      if (!studentDomain) throw new Error("Could not determine origin");
+
+      // 2. Force the redirect to stay on the student domain
       const { error } = await this.supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${siteUrl}/auth/reset-password`,
+        redirectTo: `${studentDomain}/auth/callback?next=/auth/update-password`,
       });
 
-      if (error) {
-        return {
-          success: false,
-          error: "Failed to send password reset email. Please try again.",
-        };
-      }
-
-      return {
-        success: true,
-        error: "Password reset instructions sent to your email",
-      };
+      if (error) return { success: false, error: error.message };
+      return { success: true, error: "Reset link sent to your email" };
     } catch (error) {
-      return {
-        success: false,
-        error: "An unexpected error occurred. Please try again.",
-      };
+      return { success: false, error: "An unexpected error occurred." };
     }
   }
 
