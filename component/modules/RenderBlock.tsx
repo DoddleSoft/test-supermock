@@ -200,7 +200,7 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
               <div key={`q-${qNum}`} className="my-4 pl-0">
                 <QuestionHeader qNum={qNum} text={questionText} />
 
-                <div className="space-y-2 pl-4">
+                <div className="space-y-1 pl-4">
                   {qData!.options!.map((opt: any) => {
                     const value = typeof opt === "string" ? opt : opt.label;
                     const displayText =
@@ -211,7 +211,7 @@ export const RenderBlock: React.FC<RenderBlockProps> = ({
                     return (
                       <label
                         key={value}
-                        className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 p-2 rounded transition-colors"
+                        className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 px-2 py-1 rounded transition-colors"
                       >
                         <input
                           type="radio"

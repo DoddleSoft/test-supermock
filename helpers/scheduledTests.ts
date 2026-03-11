@@ -38,6 +38,7 @@ export interface StudentRegisteredTest {
   center_name: string;
   center_slug: string;
   started_at: string;
+  has_entered: boolean;
 }
 
 export interface TestStatus {

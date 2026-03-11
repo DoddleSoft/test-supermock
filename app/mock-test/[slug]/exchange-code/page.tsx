@@ -70,6 +70,7 @@ export default function JoinCenterPage() {
 
       if (!result.success) {
         setError(result.error || "Failed to join test");
+        setIsLoading(false);
         return;
       }
 
@@ -77,6 +78,7 @@ export default function JoinCenterPage() {
       if (!result.attemptId || !result.paperId) {
         console.error("[ExchangeCode] Invalid RPC response:", result);
         setError("Server returned incomplete data. Please try again.");
+        setIsLoading(false);
         return;
       }
 
@@ -94,6 +96,7 @@ export default function JoinCenterPage() {
           "Test modules not available. Please contact support with attempt ID: " +
             result.attemptId,
         );
+        setIsLoading(false);
         return;
       }
 
@@ -108,12 +111,11 @@ export default function JoinCenterPage() {
         })),
       });
 
-      // Redirect to exam interface
+      // Redirect to exam interface — keep loader spinning during navigation
       router.push(`/mock-test/${slug}/${result.attemptId}`);
     } catch (err) {
       console.error("[ExchangeCode] Unexpected error:", err);
       setError("Connection failed. Please try again.");
-    } finally {
       setIsLoading(false);
     }
   };

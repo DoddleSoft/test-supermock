@@ -269,6 +269,7 @@ export function ExamProvider({
             sub_type: subSection.sub_type ?? null,
             resource_url: subSection.resource_url ?? null,
             boundary_text: subSection.boundary_text ?? null,
+            instruction: subSection.instruction ?? null,
             sub_section_index: subSection.sub_section_index ?? 0,
             questions: (subSection.questions || []).map((q: any) => ({
               id: q.id,

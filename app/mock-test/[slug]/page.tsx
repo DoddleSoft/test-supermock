@@ -134,13 +134,9 @@ export default function MockTestPage() {
     };
   }, [router, slug]);
 
-  const handleJoinTest = (scheduledTestId: string, attemptId?: string) => {
-    // If the student already joined, go directly to the waiting room
-    if (attemptId) {
-      router.push(`/mock-test/${slug}/${attemptId}`);
-    } else {
-      router.push(`/mock-test/${slug}/exchange-code?test=${scheduledTestId}`);
-    }
+  const handleJoinTest = (scheduledTestId: string) => {
+    // Always go through exchange-code so OTP is verified and modules are created
+    router.push(`/mock-test/${slug}/exchange-code?test=${scheduledTestId}`);
   };
 
   if (isLoading) {
@@ -164,7 +160,7 @@ export default function MockTestPage() {
             <div className="grid gap-6 md:grid-cols-2">
               {registeredTests.map((rTest) => {
                 const scheduled = toScheduledTest(rTest);
-                const hasJoined = !!rTest.started_at;
+                const hasJoined = rTest.has_entered;
                 const testStatus = getTestStatus(scheduled, hasJoined);
                 return (
                   <div
@@ -221,12 +217,7 @@ export default function MockTestPage() {
 
                     {/* Action Button */}
                     <button
-                      onClick={() =>
-                        handleJoinTest(
-                          rTest.scheduled_test_id,
-                          hasJoined ? rTest.attempt_id : undefined,
-                        )
-                      }
+                      onClick={() => handleJoinTest(rTest.scheduled_test_id)}
                       disabled={!testStatus.canJoin}
                       className={`w-full py-3 px-4 rounded-xl font-bold text-sm transition-all duration-200 ${
                         testStatus.canJoin

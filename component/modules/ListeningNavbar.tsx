@@ -69,15 +69,6 @@ export default function ListeningNavbar({
             <p className="text-sm text-gray-700 font-semibold">Listening</p>
           </div>
 
-          {/* --- Questions Display --- */}
-          {questions && (
-            <div className="hidden md:flex items-center gap-2 px-6 py-2 rounded-lg bg-blue-50 border border-blue-200">
-              <span className="text-sm font-semibold text-gray-900">
-                Questions {questions}
-              </span>
-            </div>
-          )}
-
           {/* --- CTA & Mobile Toggle --- */}
           <div className="flex items-center gap-6">
             <p className="font-semibold text-2xl text-gray-900">

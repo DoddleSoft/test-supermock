@@ -220,7 +220,12 @@ export async function loadExamData(attemptId: string): Promise<{
       };
     }
 
-    // Step 3: Load paper with modules
+    // Step 3: Ensure attempt_modules rows exist (idempotent)
+    await supabase.rpc("ensure_attempt_modules", {
+      p_attempt_id: attemptId,
+    });
+
+    // Step 4: Load paper with modules
     const paperResult = await loadPaperWithModules(attemptData.paper_id);
 
     if (!paperResult.success || !paperResult.data) {
