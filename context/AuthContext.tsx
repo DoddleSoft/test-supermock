@@ -5,6 +5,7 @@ import React, {
   useContext,
   useEffect,
   useState,
+  useRef,
   ReactNode,
 } from "react";
 import { User, Session } from "@supabase/supabase-js";
@@ -60,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
   const [loading, setLoading] = useState(true);
   const supabase = createClient();
+  const studentContextUserRef = useRef<string | null>(null);
 
   // Load initial session
   useEffect(() => {
@@ -71,14 +73,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (session?.user) {
           setUser(session.user);
-          // Don't block on user profile loading
-          loadUserProfile(session.user.id).catch(console.error);
           loadStudentContext(session.user).catch(console.error);
         }
       } catch (error) {
         console.error("Error loading session:", error);
       } finally {
-        // Always set loading to false after 1 second max
         setTimeout(() => setLoading(false), 100);
       }
     };
@@ -91,16 +90,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const {
       data: { subscription },
     } = authService.onAuthStateChange(async (event, session) => {
-      console.log("Auth state changed:", event, !!session);
-
       setSession(session);
       setUser(session?.user ?? null);
 
       if (session?.user) {
-        // Don't block on user profile loading
-        loadUserProfile(session.user.id).catch(console.error);
+        // Skip redundant loads on token refresh — user hasn't changed
+        if (event === "TOKEN_REFRESHED") return;
+        // On INITIAL_SESSION, only load if loadSession hasn't already handled it
+        if (
+          event === "INITIAL_SESSION" &&
+          studentContextUserRef.current === session.user.id
+        )
+          return;
         loadStudentContext(session.user).catch(console.error);
       } else {
+        studentContextUserRef.current = null;
         setUserProfile(null);
         setStudentId(null);
         setStudentName(null);
@@ -118,8 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Load user profile from public.users table
   const loadUserProfile = async (userId: string) => {
     try {
-      const { success, profile, error } =
-        await authService.getUserProfile(userId);
+      const { success, profile } = await authService.getUserProfile(userId);
 
       if (success && profile) {
         setUserProfile(profile);
@@ -133,10 +136,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const loadStudentContext = async (authUser: User) => {
+    // Prevent redundant loads for the same user
+    if (studentContextUserRef.current === authUser.id) return;
+    studentContextUserRef.current = authUser.id;
+
+    // Try sessionStorage cache first (avoids DB queries on page navigations)
+    const cachedStudentId = sessionStorage.getItem("studentId");
+    const cachedCenterId = sessionStorage.getItem("studentCenterId");
+    const cachedEmail = sessionStorage.getItem("studentEmail");
+    const cachedCenterSlug = sessionStorage.getItem("centerSlug");
+
+    if (cachedStudentId && cachedCenterId) {
+      setStudentId(cachedStudentId);
+      setStudentEmail(cachedEmail ?? authUser.email ?? null);
+      setStudentCenterId(cachedCenterId);
+      setStudentCenterSlug(cachedCenterSlug);
+      // Load user profile in background (lightweight, single query)
+      loadUserProfile(authUser.id).catch(console.error);
+      return;
+    }
+
     try {
       const { data: byId, error: byIdError } = await supabase
         .from("student_profiles")
-        .select("student_id, center_id, email, name")
+        .select("student_id, center_id, email, name, centers(slug)")
         .eq("student_id", authUser.id)
         .maybeSingle();
 
@@ -146,7 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ? (
               await supabase
                 .from("student_profiles")
-                .select("student_id, center_id, email, name")
+                .select("student_id, center_id, email, name, centers(slug)")
                 .eq("email", authUser.email)
                 .maybeSingle()
             ).data
@@ -162,44 +185,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setStudentEmail(authUser.email ?? null);
         setStudentCenterId(null);
         setStudentCenterSlug(null);
+        // Still load user profile
+        loadUserProfile(authUser.id).catch(console.error);
         return;
       }
+
+      const resolvedCenterSlug = (studentProfile as any).centers?.slug ?? null;
 
       setStudentId(studentProfile.student_id ?? null);
       setStudentName((studentProfile as any).name ?? null);
       setStudentEmail(studentProfile.email ?? authUser.email ?? null);
       setStudentCenterId(studentProfile.center_id ?? null);
+      setStudentCenterSlug(resolvedCenterSlug);
 
-      let resolvedCenterSlug: string | null = null;
-      if (studentProfile.center_id) {
-        const { data: center, error: centerError } = await supabase
-          .from("centers")
-          .select("slug")
-          .eq("center_id", studentProfile.center_id)
-          .maybeSingle();
-
-        if (centerError) {
-          console.error("Center lookup error:", centerError);
-        }
-
-        resolvedCenterSlug = center?.slug ?? null;
-        setStudentCenterSlug(resolvedCenterSlug);
-      } else {
-        setStudentCenterSlug(null);
-      }
-
-      if (studentProfile.email) {
+      // Cache in sessionStorage
+      if (studentProfile.email)
         sessionStorage.setItem("studentEmail", studentProfile.email);
-      }
-      if (studentProfile.student_id) {
+      if (studentProfile.student_id)
         sessionStorage.setItem("studentId", studentProfile.student_id);
-      }
-      if (studentProfile.center_id) {
+      if (studentProfile.center_id)
         sessionStorage.setItem("studentCenterId", studentProfile.center_id);
-      }
-      if (resolvedCenterSlug) {
+      if (resolvedCenterSlug)
         sessionStorage.setItem("centerSlug", resolvedCenterSlug);
-      }
+
+      // Load user profile in background
+      loadUserProfile(authUser.id).catch(console.error);
     } catch (error) {
       console.error("Error loading student context:", error);
       setStudentId(null);

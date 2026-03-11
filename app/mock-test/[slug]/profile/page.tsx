@@ -137,51 +137,55 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
     >,
   );
 
-  const latestTest = tests[0];
-
   // IELTS rounding: round to nearest 0.5 (with .25 rounding up to .5, .75 rounding up to next whole)
   const ieltsRound = (score: number) => Math.round(score * 2) / 2;
 
+  const isGraded = (test: (typeof tests)[number]) =>
+    test.modules.listening > 0 ||
+    test.modules.reading > 0 ||
+    test.modules.writing > 0;
+
+  // Latest graded test for the score card
+  const latestGradedTest = tests.find(isGraded) ?? null;
+
   // Calculate overall score client-side: (L + R + W) / 3 with IELTS rounding
-  const computedOverallScore = latestTest
+  const computedOverallScore = latestGradedTest
     ? ieltsRound(
-        (latestTest.modules.listening +
-          latestTest.modules.reading +
-          latestTest.modules.writing) /
+        (latestGradedTest.modules.listening +
+          latestGradedTest.modules.reading +
+          latestGradedTest.modules.writing) /
           3,
       )
     : 0;
 
-  // Prepare module scores for latest test
-  const moduleScores = latestTest
-    ? latestTest.modules
-    : {
-        listening: 0,
-        reading: 0,
-        writing: 0,
-        speaking: 0,
-      };
+  // Prepare module scores for latest graded test
+  const moduleScores = latestGradedTest
+    ? latestGradedTest.modules
+    : { listening: 0, reading: 0, writing: 0, speaking: 0 };
 
-  // Prepare chart data - show all tests (oldest to newest)
-  const chartData =
-    tests.length > 0
-      ? tests
-          .slice()
-          .reverse()
-          .map((test) => ({
-            label: `T${test.test_number}`,
-            testTitle: test.test_title,
-            listening: test.modules.listening || 0,
-            reading: test.modules.reading || 0,
-            writing: test.modules.writing || 0,
-            overall: ieltsRound(
+  // Chart: last 10 tests (newest first → reverse to oldest-first for display)
+  const chartData = tests
+    .slice(0, 10)
+    .reverse()
+    .map((test) => {
+      const graded = isGraded(test);
+      return {
+        label: `T${test.test_number}`,
+        testTitle: test.test_title,
+        graded,
+        listening: graded ? test.modules.listening : 0,
+        reading: graded ? test.modules.reading : 0,
+        writing: graded ? test.modules.writing : 0,
+        overall: graded
+          ? ieltsRound(
               (test.modules.listening +
                 test.modules.reading +
                 test.modules.writing) /
                 3,
-            ),
-          }))
-      : [];
+            )
+          : 0,
+      };
+    });
 
   const minScore = 5;
   const maxScore = 9;
@@ -234,11 +238,11 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
               <OverallScoreCard
                 overallScore={computedOverallScore}
                 testDate={
-                  latestTest
-                    ? formatProfileDate(latestTest.completed_at)
+                  latestGradedTest
+                    ? formatProfileDate(latestGradedTest.completed_at)
                     : "N/A"
                 }
-                testName={latestTest?.test_title || "IELTS MOCK TEST"}
+                testName={latestGradedTest?.test_title || "IELTS MOCK TEST"}
                 listening={moduleScores.listening || 0}
                 reading={moduleScores.reading || 0}
                 writing={moduleScores.writing || 0}
@@ -303,50 +307,62 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
                             className="flex items-end gap-1.5 min-w-[60px] h-full"
                             title={test.testTitle}
                           >
-                            {/* Listening Bar */}
-                            <div className="flex-1 h-full flex flex-col items-center justify-end group relative">
-                              <div
-                                className="w-full bg-blue-500 rounded-t transition-all hover:bg-blue-600"
-                                style={{
-                                  height: `${getHeight(test.listening)}%`,
-                                  minHeight: "3px",
-                                }}
-                              />
-                              {/* Tooltip */}
-                              <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
-                                L: {test.listening.toFixed(1)}
-                              </div>
-                            </div>
+                            {test.graded ? (
+                              <>
+                                {/* Listening Bar */}
+                                <div className="flex-1 h-full flex flex-col items-center justify-end group relative">
+                                  <div
+                                    className="w-full bg-blue-500 rounded-t transition-all hover:bg-blue-600"
+                                    style={{
+                                      height: `${getHeight(test.listening)}%`,
+                                      minHeight: "3px",
+                                    }}
+                                  />
+                                  <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+                                    L: {test.listening.toFixed(1)}
+                                  </div>
+                                </div>
 
-                            {/* Reading Bar */}
-                            <div className="flex-1 h-full flex flex-col items-center justify-end group relative">
-                              <div
-                                className="w-full bg-green-500 rounded-t transition-all hover:bg-green-600"
-                                style={{
-                                  height: `${getHeight(test.reading)}%`,
-                                  minHeight: "3px",
-                                }}
-                              />
-                              {/* Tooltip */}
-                              <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
-                                R: {test.reading.toFixed(1)}
-                              </div>
-                            </div>
+                                {/* Reading Bar */}
+                                <div className="flex-1 h-full flex flex-col items-center justify-end group relative">
+                                  <div
+                                    className="w-full bg-green-500 rounded-t transition-all hover:bg-green-600"
+                                    style={{
+                                      height: `${getHeight(test.reading)}%`,
+                                      minHeight: "3px",
+                                    }}
+                                  />
+                                  <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+                                    R: {test.reading.toFixed(1)}
+                                  </div>
+                                </div>
 
-                            {/* Writing Bar */}
-                            <div className="flex-1 h-full flex flex-col items-center justify-end group relative">
-                              <div
-                                className="w-full bg-purple-500 rounded-t transition-all hover:bg-purple-600"
-                                style={{
-                                  height: `${getHeight(test.writing)}%`,
-                                  minHeight: "3px",
-                                }}
-                              />
-                              {/* Tooltip */}
-                              <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
-                                W: {test.writing.toFixed(1)}
+                                {/* Writing Bar */}
+                                <div className="flex-1 h-full flex flex-col items-center justify-end group relative">
+                                  <div
+                                    className="w-full bg-purple-500 rounded-t transition-all hover:bg-purple-600"
+                                    style={{
+                                      height: `${getHeight(test.writing)}%`,
+                                      minHeight: "3px",
+                                    }}
+                                  />
+                                  <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+                                    W: {test.writing.toFixed(1)}
+                                  </div>
+                                </div>
+                              </>
+                            ) : (
+                              /* Ungraded — single gray placeholder column */
+                              <div className="flex-1 h-full flex flex-col items-center justify-end group relative">
+                                <div
+                                  className="w-full bg-gray-200 rounded-t"
+                                  style={{ height: "20%", minHeight: "8px" }}
+                                />
+                                <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-600 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10">
+                                  Not graded yet
+                                </div>
                               </div>
-                            </div>
+                            )}
                           </div>
                         );
                       })}
@@ -371,7 +387,7 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
                 )}
               </div>
 
-              {!latestTest && (
+              {!latestGradedTest && (
                 <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4 text-center">
                   <p className="text-sm text-blue-700">
                     No completed tests yet. Start your first test to see your

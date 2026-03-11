@@ -7,6 +7,7 @@ import React, {
   useEffect,
   useCallback,
   useRef,
+  useMemo,
 } from "react";
 import { createClient } from "@/utils/supabase/client";
 import { debounce } from "lodash";
@@ -348,6 +349,14 @@ export function ExamProvider({
   const autoSubmitFiredRef = useRef(false);
   const deadlineRef = useRef<number>(0);
   const tickCountRef = useRef(0);
+  const answersRef = useRef(state.answers);
+  answersRef.current = state.answers;
+  const attemptModuleRef = useRef(state.currentAttemptModule);
+  attemptModuleRef.current = state.currentAttemptModule;
+  const submitModuleRef = useRef<(autoSubmit?: boolean) => Promise<any>>(
+    async () => ({ success: false }),
+  );
+  const localStorageDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const supabase = createClient();
 
   const wait = (ms: number) =>
@@ -498,26 +507,39 @@ export function ExamProvider({
     });
   }, [state.answers, state.totalQuestions]);
 
-  // Persist answers to localStorage
+  // Persist answers to localStorage (debounced to avoid excessive serialization)
   useEffect(() => {
     if (state.attemptId && state.currentModuleId) {
-      const key = `exam_${state.attemptId}_${state.currentModuleId}`;
-      const answersObj = Object.fromEntries(state.answers);
-      localStorage.setItem(key, JSON.stringify(answersObj));
+      if (localStorageDebounceRef.current)
+        clearTimeout(localStorageDebounceRef.current);
+      localStorageDebounceRef.current = setTimeout(() => {
+        const answersObj = Object.fromEntries(answersRef.current);
+        localStorage.setItem(
+          `exam_${state.attemptId}_${state.currentModuleId}`,
+          JSON.stringify(answersObj),
+        );
+      }, 500);
     }
+    return () => {
+      if (localStorageDebounceRef.current)
+        clearTimeout(localStorageDebounceRef.current);
+    };
   }, [state.answers, state.attemptId, state.currentModuleId]);
 
   // --- MOVED UP: Save progress to database (Must be defined before use in debouncedSave and submitModule) ---
+  // Uses refs so the function identity is stable (no recreation on every answer change)
   const saveProgress = useCallback(async () => {
-    if (!state.currentAttemptModule || state.answers.size === 0) return;
+    const currentAttemptModule = attemptModuleRef.current;
+    const answers = answersRef.current;
+    if (!currentAttemptModule || answers.size === 0) return;
 
     try {
       setState((prev) => ({ ...prev, isSaving: true }));
 
-      const answersToSave = Array.from(state.answers.values())
+      const answersToSave = Array.from(answers.values())
         .filter((ans) => ans.sub_section_id && ans.question_ref)
         .map((ans) => ({
-          attempt_module_id: state.currentAttemptModule!.id,
+          attempt_module_id: currentAttemptModule.id,
           reference_id: ans.sub_section_id,
           question_ref: ans.question_ref,
           student_response:
@@ -548,15 +570,18 @@ export function ExamProvider({
       console.error("Error saving progress:", error?.message || error);
       setState((prev) => ({ ...prev, isSaving: false }));
     }
-  }, [state.currentAttemptModule, state.answers, supabase]);
+  }, [supabase]);
 
-  // Debounced save function (Now saveProgress is defined)
-  const debouncedSave = useCallback(
-    debounce(async () => {
-      await saveProgress();
-    }, 2000),
+  // Stable debounced save — created once, never recreated
+  const debouncedSave = useMemo(
+    () =>
+      debounce(() => {
+        saveProgress();
+      }, 2000),
     [saveProgress],
   );
+  // Cancel pending debounced save on unmount
+  useEffect(() => () => debouncedSave.cancel(), [debouncedSave]);
 
   // --- MOVED UP: Submit module (Must be defined before use in Timer useEffect) ---
   const submitModule = useCallback(
@@ -685,6 +710,9 @@ export function ExamProvider({
     ],
   );
 
+  // Keep ref in sync so timer can call latest submitModule without depending on it
+  submitModuleRef.current = submitModule;
+
   // Timer logic with database sync
   // Timer logic — deadline-based (drift-free, tamper-resistant)
   // The timer computes remaining from server-set deadline rather than
@@ -717,7 +745,7 @@ export function ExamProvider({
           isTimerRunning: false,
           timeLeft: 0,
         }));
-        submitModule(true);
+        submitModuleRef.current(true);
         return;
       }
 
@@ -781,7 +809,6 @@ export function ExamProvider({
     state.moduleDeadline,
     state.currentAttemptModule?.id,
     state.currentModule?.module_type,
-    submitModule,
     supabase,
   ]);
 
