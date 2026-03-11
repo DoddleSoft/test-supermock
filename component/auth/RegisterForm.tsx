@@ -147,16 +147,16 @@ export function RegisterForm() {
       <div className="w-full max-w-md">
         {/* Logo/Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">
             Create Account
           </h1>
           <p className="text-gray-600">
             Already have an account?{" "}
             <Link
               href="/auth/login"
-              className="font-semibold text-red-600 hover:text-red-700 transition-colors"
+              className="text-red-600 hover:text-red-700 font-semibold transition-colors"
             >
-              Sign in
+              Log in
             </Link>
           </p>
         </div>
@@ -292,7 +292,7 @@ export function RegisterForm() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed mt-6 shadow-sm"
+              className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed mt-2 shadow-sm"
             >
               {isLoading ? "Creating Account..." : "Create Account"}
             </button>

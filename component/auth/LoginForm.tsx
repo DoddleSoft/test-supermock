@@ -33,13 +33,13 @@ export function LoginForm() {
 
     if (registered === "true") {
       const msg =
-        "Account created successfully! Please check your email to verify your account, then sign in.";
+        "Account created successfully! Please check your email to verify your account, then log in.";
       toast.success(msg);
     }
 
     if (passwordReset === "true") {
       const msg =
-        "Password reset successfully! Please sign in with your new password.";
+        "Password reset successfully! Please log in with your new password.";
       toast.success(msg);
     }
 
@@ -53,13 +53,13 @@ export function LoginForm() {
           errorMsg = "Verification code missing. Please try signing in again.";
           break;
         case "exchange_failed":
-          errorMsg = "Failed to verify your session. Please sign in again.";
+          errorMsg = "Failed to verify your session. Please log in again.";
           break;
         case "no_session":
-          errorMsg = "Session could not be created. Please sign in again.";
+          errorMsg = "Session could not be created. Please log in again.";
           break;
         case "no_email":
-          errorMsg = "Email address not found. Please sign in again.";
+          errorMsg = "Email address not found. Please log in again.";
           break;
         case "profile_query_failed":
           errorMsg = "Failed to verify student profile. Please try again.";
@@ -230,7 +230,7 @@ export function LoginForm() {
       }, 1000);
     } catch (error) {
       const errorMsg =
-        "An unexpected error occurred during sign in. Please check your internet connection and try again.";
+        "An unexpected error occurred during log in. Please check your internet connection and try again.";
       setError(errorMsg);
       toast.error(errorMsg);
       console.error("Login error:", error);
@@ -243,14 +243,14 @@ export function LoginForm() {
       <div className="w-full max-w-md">
         {/* Logo/Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">
             Welcome Back
           </h1>
           <p className="text-gray-600">
             New to SuperMock?{" "}
             <Link
               href="/auth/register"
-              className="font-semibold text-red-600 hover:text-red-700 transition-colors"
+              className="text-red-600 hover:text-red-700 font-semibold transition-colors"
             >
               Create Account
             </Link>
@@ -294,7 +294,7 @@ export function LoginForm() {
                 </label>
                 <Link
                   href="/auth/reset-password"
-                  className="text-sm text-red-600 hover:text-red-700 font-medium transition-colors"
+                  className="text-red-600 text-sm hover:text-red-700 font-semibold transition-colors"
                 >
                   Forgot Password?
                 </Link>
@@ -358,27 +358,9 @@ export function LoginForm() {
               disabled={isLoading}
               className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded-lg transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed mt-6 shadow-sm"
             >
-              {isLoading ? "Signing in..." : "Sign In"}
+              {isLoading ? "Logging in..." : "Log In"}
             </button>
           </form>
-
-          {/* Footer Text */}
-          <p className="text-center text-xs text-gray-500 mt-4">
-            By signing in, you agree to our{" "}
-            <Link
-              href="#"
-              className="underline hover:text-gray-700 transition-colors"
-            >
-              Terms of Service
-            </Link>{" "}
-            and{" "}
-            <Link
-              href="#"
-              className="underline hover:text-gray-700 transition-colors"
-            >
-              Privacy Policy
-            </Link>
-          </p>
         </div>
       </div>
     </div>

@@ -172,12 +172,10 @@ export default function UpdatePasswordPage() {
       <div className="w-full lg:w-1/2 flex items-center justify-center p-6 lg:p-12">
         <div className="w-full max-w-md">
           <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 mb-2">
+            <h1 className="text-4xl font-bold text-gray-900 mb-2">
               Set New Password
             </h1>
-            <p className="text-md text-gray-500">
-              Your new password must be at least 8 characters long.
-            </p>
+            <p className="text-gray-600">Enter your new password below.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
