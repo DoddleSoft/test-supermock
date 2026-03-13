@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Lock, Eye, EyeOff, ArrowLeft, CheckCircle } from "lucide-react";
 import { toast } from "sonner";
 import { BrandedSection } from "@/component/auth/BrandedSection";
 import { createClient } from "@/utils/supabase/client";
+import { Turnstile, TurnstileInstance } from "@marsidev/react-turnstile";
 
 export default function UpdatePasswordPage() {
   const router = useRouter();
@@ -18,6 +19,8 @@ export default function UpdatePasswordPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [hasSession, setHasSession] = useState<boolean | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const turnstileRef = useRef<TurnstileInstance>(null);
 
   const checkSession = useCallback(async () => {
     const {
@@ -233,6 +236,14 @@ export default function UpdatePasswordPage() {
                 </button>
               </div>
             </div>
+
+            <Turnstile
+              ref={turnstileRef}
+              siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
+              onSuccess={(token) => setCaptchaToken(token)}
+              onExpire={() => setCaptchaToken(null)}
+              onError={() => setCaptchaToken(null)}
+            />
 
             <button
               type="submit"

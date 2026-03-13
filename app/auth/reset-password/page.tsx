@@ -12,7 +12,7 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
-  // const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const turnstileRef = useRef<TurnstileInstance>(null);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -38,13 +38,13 @@ export default function ForgotPasswordPage() {
 
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${siteUrl}/auth/callback?next=/auth/update-password`,
-        // captchaToken: captchaToken,
+        captchaToken: captchaToken ?? undefined,
       });
 
       if (error) {
         toast.error("Failed to send reset email. Please try again.");
         turnstileRef.current?.reset();
-        // setCaptchaToken(null);
+        setCaptchaToken(null);
         setIsLoading(false);
         return;
       }
@@ -84,7 +84,7 @@ export default function ForgotPasswordPage() {
                 setEmailSent(false);
                 setEmail("");
                 turnstileRef.current?.reset();
-                // setCaptchaToken(null);
+                setCaptchaToken(null);
               }}
               className="text-red-600 hover:text-red-700 text-sm font-medium underline mb-4"
             >
@@ -139,13 +139,13 @@ export default function ForgotPasswordPage() {
               </div>
             </div>
 
-            {/* <Turnstile
+            <Turnstile
               ref={turnstileRef}
               siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
               onSuccess={(token) => setCaptchaToken(token)}
               onExpire={() => setCaptchaToken(null)}
               onError={() => setCaptchaToken(null)}
-            /> */}
+            />
 
             <button
               type="submit"
