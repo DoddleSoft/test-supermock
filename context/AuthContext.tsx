@@ -266,7 +266,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       setLoading(true);
 
-      const result = await authService.login({ email, password, captchaToken });
+      const result = await authService.login({
+        email,
+        password,
+        captchaToken,
+      });
 
       if (!result.success) {
         return {

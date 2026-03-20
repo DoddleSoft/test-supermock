@@ -143,13 +143,24 @@ export default function MockTestPage() {
     return <Loader />;
   }
 
+  // Only show tests that are upcoming or currently running.
+  // Filter out completed, cancelled, and invalid (deleted) entries.
+  const visibleTests = registeredTests.filter((rTest) => {
+    if (!rTest.scheduled_at) return false;
+    const d = new Date(rTest.scheduled_at);
+    if (isNaN(d.getTime()) || d.getFullYear() < 2000) return false;
+    const scheduled = toScheduledTest(rTest);
+    const status = getTestStatus(scheduled, rTest.has_entered);
+    return status.status !== "completed" && status.status !== "cancelled";
+  });
+
   return (
     <div className="min-h-screen bg-white">
       <main className="mx-auto max-w-7xl px-6 py-12">
         <Navbar />
 
         {/* Registered Tests Section */}
-        {registeredTests.length > 0 ? (
+        {visibleTests.length > 0 ? (
           <div className="mb-12 mt-24">
             <div className="mb-6">
               <h2 className="text-xl font-bold text-gray-900">
@@ -158,7 +169,7 @@ export default function MockTestPage() {
             </div>
 
             <div className="grid gap-6 md:grid-cols-2">
-              {registeredTests.map((rTest) => {
+              {visibleTests.map((rTest) => {
                 const scheduled = toScheduledTest(rTest);
                 const hasJoined = rTest.has_entered;
                 const testStatus = getTestStatus(scheduled, hasJoined);
