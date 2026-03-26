@@ -655,8 +655,6 @@ export function ExamProvider({
           );
         }
 
-        console.log("[ExamContext] Grading result:", result);
-
         // 4. Clear localStorage for this module
         const localKey = `exam_${state.attemptId}_${state.currentModuleId}`;
         localStorage.removeItem(localKey);

@@ -51,15 +51,6 @@ export default async function ExamPage({
 
   const { paperData, studentId } = result.data;
 
-  // Validate modules data
-  console.log("[ExamPage] Paper data structure:", {
-    hasPaper: !!paperData.paper,
-    paperId: paperData.paper?.id,
-    hasModules: !!paperData.modules,
-    modulesType: typeof paperData.modules,
-    modulesKeys: paperData.modules ? Object.keys(paperData.modules) : [],
-  });
-
   // Check if modules exist
   if (!paperData.modules || typeof paperData.modules !== "object") {
     console.error("[ExamPage] No modules data in paper:", paperData);
@@ -109,11 +100,6 @@ export default async function ExamPage({
     subheading: module.subheading,
     instruction: module.instruction,
   }));
-
-  console.log(
-    "[ExamPage] Transformed modules:",
-    modulesArray.map((m) => ({ id: m.id, type: m.module_type })),
-  );
 
   return (
     <ExamProvider

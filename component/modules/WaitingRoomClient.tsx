@@ -37,6 +37,7 @@ export default function WaitingRoomClient({
     {},
   );
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingModuleId, setLoadingModuleId] = useState<string | null>(null);
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -116,9 +117,6 @@ export default function WaitingRoomClient({
         completedCount >= expectedCount &&
         data.length >= expectedCount
       ) {
-        console.log(
-          "[WaitingRoom] All modules completed, redirecting to profile page",
-        );
         if (isMountedRef.current) {
           redirectTimerRef.current = setTimeout(() => {
             if (isMountedRef.current) {
@@ -199,6 +197,7 @@ export default function WaitingRoomClient({
   };
 
   const handleStartModule = (moduleId: string, moduleType: string) => {
+    setLoadingModuleId(moduleId);
     // Navigate to module-specific route
     router.push(`/mock-test/${centerSlug}/${attemptId}/${moduleType}`);
   };
@@ -248,122 +247,140 @@ export default function WaitingRoomClient({
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 flex items-center justify-center">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-5xl px-8 py-4 pt-12 w-full">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-full px-8 py-4 pt-12 items-center w-full">
         {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-green-100 mb-4">
-            <CheckCircle className="w-10 h-10 text-green-600" />
+        <div className="flex flex-col  max-w-5xl mx-auto w-full text-center mb-4">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-green-100 mb-4">
+              <CheckCircle className="w-10 h-10 text-green-600" />
+            </div>
+
+            <p className="text-gray-600 font-semibold text-lg">
+              Select a module to begin your IELTS mock test
+            </p>
           </div>
+          {/* Module Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {modules.map((module) => {
+              const status = moduleStatuses[module.id];
+              const isCompleted = status === "completed";
+              const isInProgress = status === "in_progress";
 
-          <p className="text-gray-600 font-semibold text-lg">
-            Select a module to begin your IELTS mock test
-          </p>
-        </div>
-
-        {/* Module Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {modules.map((module) => {
-            const status = moduleStatuses[module.id];
-            const isCompleted = status === "completed";
-            const isInProgress = status === "in_progress";
-
-            return (
-              <button
-                key={module.id}
-                onClick={() => handleStartModule(module.id, module.module_type)}
-                disabled={isCompleted}
-                className={`group relative overflow-hidden rounded-xl border-2 bg-white p-6 text-left transition-all duration-300 ${
-                  isCompleted
-                    ? "border-gray-300 opacity-60 cursor-not-allowed"
-                    : "border-gray-200 hover:shadow-xl hover:border-transparent hover:-translate-y-1"
-                }`}
-              >
-                {/* Background Gradient on Hover (only if not completed) */}
-                {!isCompleted && (
-                  <div
-                    className={`absolute inset-0 bg-gradient-to-r ${getModuleColor(module.module_type)} opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
-                  />
-                )}
-
-                {/* Completed Badge */}
-                {isCompleted && (
-                  <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-semibold">
-                    <CheckCircle className="w-3 h-3" />
-                    Completed
-                  </div>
-                )}
-
-                {/* In Progress Badge */}
-                {isInProgress && !isCompleted && (
-                  <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-semibold">
-                    <Clock className="w-3 h-3" />
-                    In Progress
-                  </div>
-                )}
-
-                {/* Content */}
-                <div className="relative z-10">
-                  <div className="flex items-start justify-between mb-4">
+              return (
+                <button
+                  key={module.id}
+                  onClick={() =>
+                    handleStartModule(module.id, module.module_type)
+                  }
+                  disabled={isCompleted || loadingModuleId !== null}
+                  className={`group relative overflow-hidden rounded-xl border-2 bg-white p-6 text-left transition-all duration-300 ${
+                    isCompleted
+                      ? "border-gray-300 opacity-60 cursor-not-allowed"
+                      : loadingModuleId === module.id
+                        ? "border-blue-300 shadow-lg"
+                        : loadingModuleId !== null
+                          ? "border-gray-200 opacity-50 cursor-not-allowed"
+                          : "border-gray-200 hover:shadow-xl hover:border-transparent hover:-translate-y-1"
+                  }`}
+                >
+                  {/* Background Gradient on Hover (only if not completed) */}
+                  {!isCompleted && (
                     <div
-                      className={`flex items-center justify-center w-12 h-12 rounded-lg bg-opacity-20 transition-colors ${
-                        module.module_type === "reading"
-                          ? "bg-green-500"
-                          : module.module_type === "listening"
-                            ? "bg-blue-500"
-                            : module.module_type === "writing"
-                              ? "bg-purple-500"
-                              : "bg-orange-500"
-                      } ${isCompleted ? "opacity-50" : "group-hover:bg-white/30"}`}
-                    >
-                      <span
-                        className={`transition-colors ${
-                          isCompleted
-                            ? "text-gray-500"
-                            : module.module_type === "reading"
-                              ? "text-green-700 group-hover:text-white"
-                              : module.module_type === "listening"
-                                ? "text-blue-700 group-hover:text-white"
-                                : module.module_type === "writing"
-                                  ? "text-purple-700 group-hover:text-white"
-                                  : "text-orange-700 group-hover:text-white"
-                        }`}
-                      >
-                        {isCompleted ? (
-                          <Lock className="h-6 w-6 text-gray-900" />
-                        ) : (
-                          getModuleIcon(module.module_type)
-                        )}
-                      </span>
+                      className={`absolute inset-0 bg-gradient-to-r ${getModuleColor(module.module_type)} opacity-0 group-hover:opacity-100 transition-opacity duration-300`}
+                    />
+                  )}
+
+                  {/* Completed Badge */}
+                  {isCompleted && (
+                    <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-semibold">
+                      <CheckCircle className="w-3 h-3" />
+                      Completed
                     </div>
-                    {!isCompleted && (
-                      <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-white transition-colors" />
-                    )}
+                  )}
+
+                  {/* In Progress Badge */}
+                  {isInProgress && !isCompleted && (
+                    <div className="absolute top-4 right-4 z-20 flex items-center gap-1 bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-semibold">
+                      <Clock className="w-3 h-3" />
+                      In Progress
+                    </div>
+                  )}
+
+                  {/* Loading Overlay */}
+                  {loadingModuleId === module.id && (
+                    <div className="absolute inset-0 z-30 flex items-center justify-center bg-white/80 backdrop-blur-sm rounded-xl">
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="w-10 h-10 border-[3px] border-blue-600 border-t-transparent rounded-full animate-spin" />
+                        <span className="text-sm font-medium text-blue-700">
+                          Loading module...
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Content */}
+                  <div className="relative z-10">
+                    <div className="flex items-start justify-between mb-4">
+                      <div
+                        className={`flex items-center justify-center w-12 h-12 rounded-lg bg-opacity-20 transition-colors ${
+                          module.module_type === "reading"
+                            ? "bg-green-500"
+                            : module.module_type === "listening"
+                              ? "bg-blue-500"
+                              : module.module_type === "writing"
+                                ? "bg-purple-500"
+                                : "bg-orange-500"
+                        } ${isCompleted ? "opacity-50" : "group-hover:bg-white/30"}`}
+                      >
+                        <span
+                          className={`transition-colors ${
+                            isCompleted
+                              ? "text-gray-500"
+                              : module.module_type === "reading"
+                                ? "text-green-700 group-hover:text-white"
+                                : module.module_type === "listening"
+                                  ? "text-blue-700 group-hover:text-white"
+                                  : module.module_type === "writing"
+                                    ? "text-purple-700 group-hover:text-white"
+                                    : "text-orange-700 group-hover:text-white"
+                          }`}
+                        >
+                          {isCompleted ? (
+                            <Lock className="h-6 w-6 text-gray-900" />
+                          ) : (
+                            getModuleIcon(module.module_type)
+                          )}
+                        </span>
+                      </div>
+                      {!isCompleted && (
+                        <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-white transition-colors" />
+                      )}
+                    </div>
+
+                    <h3
+                      className={`text-xl font-bold mb-2 transition-colors ${
+                        isCompleted
+                          ? "text-gray-500"
+                          : "text-gray-900 group-hover:text-white"
+                      }`}
+                    >
+                      {module.module_type.charAt(0).toUpperCase() +
+                        module.module_type.slice(1)}{" "}
+                      Test
+                    </h3>
                   </div>
-
-                  <h3
-                    className={`text-xl font-bold mb-2 transition-colors ${
-                      isCompleted
-                        ? "text-gray-500"
-                        : "text-gray-900 group-hover:text-white"
-                    }`}
-                  >
-                    {module.module_type.charAt(0).toUpperCase() +
-                      module.module_type.slice(1)}{" "}
-                    Test
-                  </h3>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Footer Note */}
-        <div className="mt-8 px-4 py-2 bg-blue-50 rounded-lg border border-blue-200">
-          <p className="text-sm text-blue-800">
-            <strong>Note:</strong> Once you start a module, the timer will begin
-            automatically. Completed modules are locked and cannot be
-            re-attempted.
-          </p>
+                </button>
+              );
+            })}
+          </div>
+          {/* Footer Note */}
+          <div className="mt-8 px-4 py-2 bg-blue-50 rounded-lg border border-blue-200">
+            <p className="text-sm text-blue-800">
+              <strong>Note:</strong> Once you start a module, the timer will
+              begin automatically. Completed modules are locked and cannot be
+              re-attempted.
+            </p>
+          </div>
         </div>
       </div>
     </div>

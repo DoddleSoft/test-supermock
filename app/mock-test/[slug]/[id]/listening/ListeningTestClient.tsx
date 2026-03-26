@@ -47,17 +47,17 @@ export default function ListeningTestClient({
   const [moduleLoaded, setModuleLoaded] = useState(false);
   const [audioProgress, setAudioProgress] = useState(0);
   const [audioEnded, setAudioEnded] = useState(false);
-  const [showNavWarning, setShowNavWarning] = useState(false);
-  const [pendingSection, setPendingSection] = useState<number | null>(null);
   // Whether autoplay was blocked and we need to show a manual Play button
   const [needsManualPlay, setNeedsManualPlay] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const audioTimesRef = useRef<Record<string, number>>({});
+  const audioEndedRef = useRef<Record<string, boolean>>({});
   const localAnswersRef = useRef<Record<string, string>>({});
   const moduleLoadInProgress = useRef(false);
   // Track the section ID that the current audio src belongs to so we
   // never accidentally apply the wrong saved timestamp after a section change.
   const loadedAudioSectionRef = useRef<string | null>(null);
+  const isPausedForNavigationRef = useRef(false);
 
   // Handle auto-submit dialog → navigate to waiting room
   useEffect(() => {
@@ -142,6 +142,43 @@ export default function ListeningTestClient({
     sectionSubSections.some((ss) => ss.id === qa.sub_section_id),
   );
 
+  // Restore audio times from sessionStorage on mount (for refresh recovery)
+  useEffect(() => {
+    if (!moduleLoaded || !attemptId || sections.length === 0) return;
+    sections.forEach((section) => {
+      const key = `audio_time_${attemptId}_${section.id}`;
+      const stored = sessionStorage.getItem(key);
+      if (stored) {
+        const time = parseFloat(stored);
+        if (!isNaN(time) && time > 0) {
+          audioTimesRef.current[section.id] = time;
+        }
+      }
+    });
+  }, [moduleLoaded, attemptId, sections]);
+
+  // Save audio time on page unload (refresh/close)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const audio = audioRef.current;
+      if (audio && currentSection?.id && attemptId) {
+        try {
+          sessionStorage.setItem(
+            `audio_time_${attemptId}_${currentSection.id}`,
+            String(audio.currentTime),
+          );
+        } catch {}
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [attemptId, currentSection?.id]);
+
+  // Reset navigation pause flag when section changes
+  useEffect(() => {
+    isPausedForNavigationRef.current = false;
+  }, [currentSectionIndex]);
+
   const questionToSubSection = useMemo(() => {
     const map: Record<string, string> = {};
     sectionQuestions.forEach((qa) => {
@@ -206,8 +243,9 @@ export default function ListeningTestClient({
           syncStoredAnswersToDatabase(attemptId, currentAttemptModule.id),
           {
             loading: "Saving answers...",
-            success: (result) => `Saved ${result.savedCount} answers`,
+            success: (result) => `Answers Saved`,
             error: "Failed to save answers",
+            duration: 1000,
           },
         );
       }
@@ -263,45 +301,27 @@ export default function ListeningTestClient({
     return "";
   }, [currentSection, sectionSubSections]);
 
-  // Handle section navigation with warning — pause audio immediately
+  // Handle section navigation — save audio position and switch seamlessly
   const handleSectionChange = (newIndex: number) => {
     if (newIndex === currentSectionIndex) return;
-
-    const audio = audioRef.current;
-    // Always save current playback time before any navigation
-    if (audio && currentSection?.id) {
-      audioTimesRef.current[currentSection.id] = audio.currentTime;
-    }
-
-    // If audio is still playing, pause it NOW and show warning
-    if (audio && !audio.paused && !audio.ended) {
-      audio.pause();
-      setShowNavWarning(true);
-      setPendingSection(newIndex);
-    } else {
-      // Audio finished or never started — just navigate
-      setCurrentSection(newIndex);
-    }
-  };
-
-  const confirmNavigation = () => {
-    if (pendingSection !== null) {
-      setCurrentSection(pendingSection);
-      setPendingSection(null);
-    }
-    setShowNavWarning(false);
-  };
-
-  const cancelNavigation = () => {
-    // Resume audio from the exact spot the user left off
     const audio = audioRef.current;
     if (audio && currentSection?.id) {
-      const savedTime = audioTimesRef.current[currentSection.id] ?? 0;
-      audio.currentTime = savedTime;
-      audio.play().catch(console.error);
+      const currentTime = audio.currentTime;
+      audioTimesRef.current[currentSection.id] = currentTime;
+      if (attemptId) {
+        try {
+          sessionStorage.setItem(
+            `audio_time_${attemptId}_${currentSection.id}`,
+            String(currentTime),
+          );
+        } catch {}
+      }
+      isPausedForNavigationRef.current = true;
+      if (!audio.paused) {
+        audio.pause();
+      }
     }
-    setPendingSection(null);
-    setShowNavWarning(false);
+    setCurrentSection(newIndex);
   };
 
   // Manual play handler — used when autoplay is blocked by the browser
@@ -318,42 +338,57 @@ export default function ListeningTestClient({
   }, []);
 
   // ---------- Audio management ----------
-  // When the section changes, reset UI state and update the audio source.
-  // We do NOT set currentTime here — that is deferred to onLoadedMetadata
-  // because the browser may not be ready to seek yet.
+  // Single consolidated effect: set src imperatively, attach listeners,
+  // seek to saved position, and autoplay. This avoids the double-load
+  // race caused by React updating the DOM `src` attribute (which triggers
+  // a browser auto-load) AND a separate `audio.load()` call.
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !currentSection?.id) return;
-
-    // Reset UI for the new section
-    setAudioEnded(false);
-    setAudioProgress(0);
-    setNeedsManualPlay(false);
-    // Mark which section this audio load is for (prevents race conditions)
-    loadedAudioSectionRef.current = currentSection.id;
-  }, [currentSection?.id]);
-
-  // Core audio lifecycle — attach listeners and attempt autoplay
-  useEffect(() => {
-    if (!moduleLoaded || sections.length === 0 || !audioProxyUrl) return;
+    if (!moduleLoaded || sections.length === 0) return;
     const audio = audioRef.current;
     if (!audio) return;
     const sectionId = currentSection?.id || "";
+    const url = audioProxyUrl;
 
-    // Load the new source
+    // Update tracking ref
+    loadedAudioSectionRef.current = sectionId;
+    isPausedForNavigationRef.current = false;
+
+    // Reset UI for the new section
+    const wasEnded = audioEndedRef.current[sectionId] ?? false;
+    setAudioEnded(wasEnded);
+    setNeedsManualPlay(false);
+
+    // Restore progress from saved time
+    const savedTime = audioTimesRef.current[sectionId] ?? 0;
+    if (wasEnded) {
+      setAudioProgress(100);
+      setIsPlaying(false);
+      return; // Don't reload audio for a completed section
+    }
+
+    if (!url) {
+      setAudioProgress(0);
+      setIsPlaying(false);
+      return;
+    }
+
+    // Set src imperatively — do NOT use a React prop on <audio>.
+    // This prevents the browser from auto-loading when React commits
+    // the DOM change, which races with our explicit load() call.
+    audio.src = url;
     audio.load();
 
     // --- Event handlers ---
     const handleLoadedMetadata = () => {
-      // Only seek if the audio still belongs to the section we intended
       if (loadedAudioSectionRef.current !== sectionId) return;
-
-      const savedTime = audioTimesRef.current[sectionId] ?? 0;
-      // Clamp to valid range so we don't overshoot a short track
+      // Seek to saved position
       if (savedTime > 0 && savedTime < audio.duration) {
         audio.currentTime = savedTime;
+        setAudioProgress((savedTime / audio.duration) * 100);
+      } else {
+        setAudioProgress(0);
       }
-      // Now attempt autoplay
+      // Attempt autoplay
       audio
         .play()
         .then(() => {
@@ -361,7 +396,6 @@ export default function ListeningTestClient({
           setNeedsManualPlay(false);
         })
         .catch(() => {
-          // Autoplay blocked — surface a real Play button
           setIsPlaying(false);
           setNeedsManualPlay(true);
         });
@@ -369,10 +403,11 @@ export default function ListeningTestClient({
 
     const handlePlay = () => setIsPlaying(true);
     const handlePause = () => {
-      // Only auto-resume if not paused intentionally (nav warning)
-      if (!audio.ended && !audio.seeking && !showNavWarning) {
+      if (!audio.ended && !audio.seeking && !isPausedForNavigationRef.current) {
         setTimeout(() => {
-          audio.play().catch(console.error);
+          if (loadedAudioSectionRef.current === sectionId) {
+            audio.play().catch(console.error);
+          }
         }, 100);
       }
       setIsPlaying(false);
@@ -380,14 +415,28 @@ export default function ListeningTestClient({
     const handleEnded = () => {
       setIsPlaying(false);
       setAudioEnded(true);
+      audioEndedRef.current[sectionId] = true;
     };
+    let lastStorageSave = 0;
     const handleTimeUpdate = () => {
-      // Persist time in ref (no re-render)
       if (loadedAudioSectionRef.current === sectionId) {
         audioTimesRef.current[sectionId] = audio.currentTime;
       }
       if (audio.duration) {
         setAudioProgress((audio.currentTime / audio.duration) * 100);
+      }
+      // Throttled save to sessionStorage for refresh recovery
+      if (attemptId && audio.currentTime > 0) {
+        const now = Date.now();
+        if (now - lastStorageSave > 2000) {
+          lastStorageSave = now;
+          try {
+            sessionStorage.setItem(
+              `audio_time_${attemptId}_${sectionId}`,
+              String(audio.currentTime),
+            );
+          } catch {}
+        }
       }
     };
     const handleError = () => {
@@ -403,6 +452,13 @@ export default function ListeningTestClient({
     audio.addEventListener("error", handleError);
 
     return () => {
+      // Save time before cleanup
+      if (
+        loadedAudioSectionRef.current === sectionId &&
+        audio.currentTime > 0
+      ) {
+        audioTimesRef.current[sectionId] = audio.currentTime;
+      }
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);
@@ -415,7 +471,7 @@ export default function ListeningTestClient({
     sections.length,
     audioProxyUrl,
     currentSection?.id,
-    showNavWarning,
+    attemptId,
   ]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -457,6 +513,15 @@ export default function ListeningTestClient({
 
   return (
     <div className="min-h-screen bg-white">
+      {/* Always-rendered audio element — src set imperatively by the effect */}
+      <audio
+        ref={audioRef}
+        className="hidden"
+        preload="auto"
+        controlsList="nodownload noplaybackrate"
+        onContextMenu={(e) => e.preventDefault()}
+      />
+
       {/* Full-screen loading overlay during submission */}
       {isSubmitting && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center">
@@ -477,8 +542,8 @@ export default function ListeningTestClient({
         isSubmitting={isSubmitting}
       />
 
-      <main className="mx-auto max-w-7xl pt-28 px-4">
-        <div className="grid gap-8 lg:grid-cols-2">
+      <main className="mx-auto max-w-full pt-28 px-8">
+        <div className="grid gap-8 lg:grid-cols-[4fr_6fr]">
           {/* Audio Player Panel */}
           <div className="flex h-[calc(100vh-200px)] flex-col rounded-md bg-white shadow-sm border border-gray-100">
             <div className="border-b border-gray-200 px-4 py-3">
@@ -495,14 +560,6 @@ export default function ListeningTestClient({
                 </div>
                 {audioProxyUrl ? (
                   <>
-                    <audio
-                      ref={audioRef}
-                      className="hidden"
-                      src={audioProxyUrl}
-                      preload="auto"
-                      controlsList="nodownload noplaybackrate"
-                      onContextMenu={(e) => e.preventDefault()}
-                    />
                     <div className="w-full">
                       <div className="bg-gray-100 rounded-lg p-4 mb-4">
                         <div className="flex items-center justify-between mb-2">
@@ -680,45 +737,6 @@ export default function ListeningTestClient({
           </div>
         </div>
       </div>
-
-      {/* Navigation Warning Modal */}
-      {showNavWarning && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
-            <div className="flex items-start gap-4">
-              <div className="flex-shrink-0">
-                <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
-                  <AlertTriangle className="w-6 h-6 text-red-600" />
-                </div>
-              </div>
-              <div className="flex-1">
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                  Navigation Warning
-                </h3>
-                <p className="text-sm text-gray-600 mb-6">
-                  Moving to another section will restart the audio from the
-                  beginning of that section, and you will lose time. Are you
-                  sure you want to continue?
-                </p>
-                <div className="flex gap-3 justify-end">
-                  <button
-                    onClick={cancelNavigation}
-                    className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={confirmNavigation}
-                    className="px-4 py-2 bg-gray-600 rounded-lg text-sm font-medium text-white hover:bg-gray-700 transition-colors"
-                  >
-                    Continue
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Confirmation Dialog */}
       {showConfirmDialog && (

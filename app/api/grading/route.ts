@@ -690,10 +690,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return errorResponse("Failed to commit grading results", 500);
     }
 
-    console.log(
-      `[Grading] Atomic commit succeeded: ${commitResult?.answers_updated ?? 0} answers updated`,
-    );
-
     // -------------------------------------------------------
     // 13. MODULE FLOW CONTROL (single RPC)
     // -------------------------------------------------------
@@ -716,11 +712,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // 14. RETURN RESULT
     // -------------------------------------------------------
     const elapsed = Date.now() - startTime;
-    console.log(
-      `[Grading v${GRADING_VERSION}] Module ${attemptModuleId} (${moduleType}) graded in ${elapsed}ms: ` +
-        `${correctCount}/${moduleQuestions.length} correct, band ${bandScore}, ` +
-        `next=${nextModuleType ?? "none"}, attemptDone=${attemptCompleted}`,
-    );
 
     return NextResponse.json({
       success: true,

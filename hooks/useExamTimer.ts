@@ -82,9 +82,6 @@ export function useExamTimer({
     const now = Date.now();
     if (now - lastSyncRef.current >= SYNC_INTERVAL) {
       lastSyncRef.current = now;
-      // Recalculate from server time if needed
-      // This is where you'd call a lightweight API to verify time
-      console.log("[Timer] Background sync check");
     }
   }, []);
 
@@ -108,7 +105,6 @@ export function useExamTimer({
         expiredExecutedRef.current = true;
         setPhase("expired");
         setIsExpired(true);
-        console.log("[Timer] Phase 4: Hard Stop - Force Submit");
         onForceSubmit();
         return;
       }
@@ -121,7 +117,6 @@ export function useExamTimer({
       ) {
         safetyExecutedRef.current = true;
         setPhase("safety");
-        console.log("[Timer] Phase 3: Safety Net - Auto-saving");
 
         try {
           await onAutoSave();
@@ -140,7 +135,6 @@ export function useExamTimer({
         warningShownRef.current = true;
         setPhase("warning");
         setShowWarningModal(true);
-        console.log("[Timer] Phase 2: Warning - Show Modal");
         return;
       }
 

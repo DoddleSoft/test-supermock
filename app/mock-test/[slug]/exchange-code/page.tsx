@@ -100,17 +100,6 @@ export default function JoinCenterPage() {
         return;
       }
 
-      console.log("[ExchangeCode] Join successful:", {
-        attemptId: result.attemptId,
-        paperId: result.paperId,
-        status: result.status,
-        modulesCount: result.moduleIds.length,
-        modules: result.moduleIds.map((m) => ({
-          type: m.module_type,
-          status: m.status,
-        })),
-      });
-
       // Redirect to exam interface — keep loader spinning during navigation
       router.push(`/mock-test/${slug}/${result.attemptId}`);
     } catch (err) {
@@ -283,7 +272,7 @@ export default function JoinCenterPage() {
                   Verifying...
                 </>
               ) : (
-                "Join Center"
+                "Join Test"
               )}
             </button>
           </div>

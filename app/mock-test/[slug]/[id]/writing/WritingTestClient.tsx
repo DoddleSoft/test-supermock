@@ -108,8 +108,9 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
           syncStoredAnswersToDatabase(attemptId, currentAttemptModule.id),
           {
             loading: "Saving answers...",
-            success: (result) => `Saved ${result.savedCount} answers`,
+            success: (result) => `Answers Saved`,
             error: "Failed to save answers",
+            duration: 1000,
           },
         );
       }
@@ -272,8 +273,8 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
         isSubmitting={isSubmitting}
       />
 
-      <main className="mx-auto max-w-7xl pt-28 px-4">
-        <div className="grid gap-8 lg:grid-cols-2">
+      <main className="mx-auto max-w-full pt-28 px-8">
+        <div className="grid gap-8 lg:grid-cols-[2fr_3fr]">
           {/* Instructions Panel left side*/}
           <div className="flex h-[calc(100vh-200px)] flex-col rounded-lg bg-white shadow-sm border border-gray-200">
             <div className="flex justify-between items-center border-b border-gray-200 px-4 py-2">
@@ -284,7 +285,6 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
                 {wordCounts[currentSection?.id || ""] || 0} words
               </p>
             </div>
-
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {currentSection?.content_text && (
                 <div className="prose prose-sm max-w-none">
@@ -336,7 +336,7 @@ export default function WritingTestClient({ slug }: WritingTestClientProps) {
           </div>
 
           {/* Writing Panel right side*/}
-          <div className="flex h-[calc(100vh-200px)] flex-col rounded-lg">
+          <div className="flex h-[calc(100vh-200px)] flex-col rounded-lg min-h-0">
             {currentSection?.instruction && (
               <p className="text-xs text-gray-900 mb-2 bg-red-200 p-2 rounded-lg text-center font-medium">
                 {currentSection.instruction}

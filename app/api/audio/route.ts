@@ -3,9 +3,7 @@ import { createClient } from "@/utils/supabase/server";
 
 /**
  * Proxy endpoint for exam audio files.
- * The client sends an opaque section/subsection ID; the server resolves
- * the real storage URL, validates authentication, and streams the bytes
- * back so the actual URL is never exposed in the browser DOM.
+ * Supports HTTP 206 Partial Content for precise audio seeking.
  */
 export async function GET(request: NextRequest) {
   const sectionId = request.nextUrl.searchParams.get("sectionId");
@@ -55,30 +53,62 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Audio not found" }, { status: 404 });
     }
 
-    // Fetch the actual audio and stream it through
-    const upstream = await fetch(audioUrl);
+    // --- NEW: Extract Range header from the client request ---
+    const range = request.headers.get("range");
+    const fetchHeaders: HeadersInit = {};
 
-    if (!upstream.ok) {
+    // If the browser wants a specific chunk (e.g., resuming), ask Supabase for that chunk
+    if (range) {
+      fetchHeaders["Range"] = range;
+    }
+
+    // Fetch the audio, passing the Range header
+    const upstream = await fetch(audioUrl, {
+      headers: fetchHeaders,
+    });
+
+    // Accept both 200 (Full Content) and 206 (Partial Content)
+    if (!upstream.ok && upstream.status !== 206) {
       return NextResponse.json(
         { error: "Failed to fetch audio" },
         { status: 502 },
       );
     }
 
-    const contentType = upstream.headers.get("content-type") || "audio/mpeg";
+    const responseHeaders = new Headers();
+
+    // Safely copy essential headers
+    responseHeaders.set(
+      "Content-Type",
+      upstream.headers.get("content-type") || "audio/mpeg",
+    );
+    // Explicitly tell the browser that seeking is supported!
+    responseHeaders.set("Accept-Ranges", "bytes");
+    responseHeaders.set("Cache-Control", "private, no-store");
+    responseHeaders.set("X-Content-Type-Options", "nosniff");
+
     const contentLength = upstream.headers.get("content-length");
-
-    const headers: HeadersInit = {
-      "Content-Type": contentType,
-      "Cache-Control": "private, no-store",
-      "X-Content-Type-Options": "nosniff",
-    };
-
     if (contentLength) {
-      headers["Content-Length"] = contentLength;
+      responseHeaders.set("Content-Length", contentLength);
     }
 
-    return new NextResponse(upstream.body, { status: 200, headers });
+    // --- NEW: Forward the 206 Partial Content status and headers ---
+    if (upstream.status === 206) {
+      const contentRange = upstream.headers.get("content-range");
+      if (contentRange) {
+        responseHeaders.set("Content-Range", contentRange);
+      }
+      return new NextResponse(upstream.body, {
+        status: 206,
+        headers: responseHeaders,
+      });
+    }
+
+    // Standard fallback: return 200 OK for full file requests
+    return new NextResponse(upstream.body, {
+      status: 200,
+      headers: responseHeaders,
+    });
   } catch (error) {
     console.error("[Audio Proxy] Error:", error);
     return NextResponse.json(

@@ -41,7 +41,7 @@ export default function ListeningNavbar({
         scrolled ? "py-2" : "py-4"
       }`}
     >
-      <div className="w-[95%] md:w-full md:max-w-5xl lg:max-w-7xl rounded-2xl pointer-events-auto">
+      <div className="w-[95%] md:w-full md:max-w-5xl lg:max-w-full px-8 rounded-2xl pointer-events-auto">
         <div
           className={`relative flex items-center justify-between rounded-2xl border transition-all duration-300 
             ${"px-4 py-3 md:px-6 md:py-4 lg:px-8"}

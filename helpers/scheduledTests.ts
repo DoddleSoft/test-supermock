@@ -371,13 +371,6 @@ export async function joinMockTest(
 
     const result = data[0];
 
-    console.log("[joinMockTest] Success:", {
-      attemptId: result.attempt_id,
-      paperId: result.paper_id,
-      status: result.join_status,
-      modulesCount: result.module_ids?.length || 0,
-    });
-
     return {
       success: true,
       attemptId: result.attempt_id,
