@@ -17,7 +17,7 @@ export function LoginForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
-  // const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const turnstileRef = useRef<TurnstileInstance>(null);
 
   const [formData, setFormData] = useState({
@@ -134,20 +134,20 @@ export function LoginForm() {
     }
 
     // Validate captcha token
-    // if (!captchaToken) {
-    //   const msg = "Please complete the captcha verification.";
-    //   toast.error(msg);
-    //   setError(msg);
-    //   setIsLoading(false);
-    //   return;
-    // }
+    if (!captchaToken) {
+      const msg = "Please complete the captcha verification.";
+      toast.error(msg);
+      setError(msg);
+      setIsLoading(false);
+      return;
+    }
 
     try {
       // Step 1: Validate credentials with Supabase Auth
       const result = await signIn(
         formData.email,
         formData.password,
-        // captchaToken,
+        captchaToken,
       );
 
       if (!result.success) {
@@ -342,14 +342,14 @@ export function LoginForm() {
               </label>
             </div>
 
-            {/* Turnstile Captcha
+            {/* Turnstile Captcha */}
             <Turnstile
               ref={turnstileRef}
               siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY!}
               onSuccess={(token) => setCaptchaToken(token)}
               onExpire={() => setCaptchaToken(null)}
               onError={() => setCaptchaToken(null)}
-            /> */}
+            />
 
             {/* Submit Button */}
             <button
