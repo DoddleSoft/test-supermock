@@ -186,7 +186,15 @@ export async function loadPaperWithModules(
   }
 }
 
-export async function loadExamData(attemptId: string): Promise<{
+export async function loadExamData(
+  attemptId: string,
+  options?: {
+    /** Pre-validated studentId — skips the full access-validation RPC */
+    studentId?: string;
+    /** Re-use an existing server Supabase client */
+    supabaseClient?: Awaited<ReturnType<typeof createClient>>;
+  },
+): Promise<{
   success: boolean;
   data?: {
     attemptData: any;
@@ -196,17 +204,22 @@ export async function loadExamData(attemptId: string): Promise<{
   error?: string;
 }> {
   try {
-    // Step 1: Validate access
-    const accessResult = await validateStudentAttemptAccess(attemptId);
+    let resolvedStudentId = options?.studentId;
 
-    if (!accessResult.success || !accessResult.hasAccess) {
-      return {
-        success: false,
-        error: accessResult.error || "Access denied to this test attempt",
-      };
+    // Step 1: Validate access (skip if caller already validated)
+    if (!resolvedStudentId) {
+      const accessResult = await validateStudentAttemptAccess(attemptId);
+
+      if (!accessResult.success || !accessResult.hasAccess) {
+        return {
+          success: false,
+          error: accessResult.error || "Access denied to this test attempt",
+        };
+      }
+      resolvedStudentId = accessResult.studentId!;
     }
 
-    const supabase = await createClient();
+    const supabase = options?.supabaseClient ?? (await createClient());
     const { data: attemptData, error: attemptError } = await supabase
       .from("mock_attempts")
       .select("*, papers(id)")
@@ -243,7 +256,7 @@ export async function loadExamData(attemptId: string): Promise<{
       data: {
         attemptData,
         paperData: sanitizedPaperData,
-        studentId: accessResult.studentId!,
+        studentId: resolvedStudentId!,
       },
     };
   } catch (error: any) {

@@ -63,30 +63,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const supabase = createClient();
   const studentContextUserRef = useRef<string | null>(null);
 
-  // Load initial session
+  // Single auth listener — handles both initial session and subsequent changes.
+  // Supabase fires INITIAL_SESSION synchronously when you subscribe,
+  // so a separate loadSession() call is redundant and causes double auth/DB hits.
   useEffect(() => {
-    const loadSession = async () => {
-      try {
-        setLoading(true);
-        const session = await authService.getSession();
-        setSession(session);
+    setLoading(true);
 
-        if (session?.user) {
-          setUser(session.user);
-          loadStudentContext(session.user).catch(console.error);
-        }
-      } catch (error) {
-        console.error("Error loading session:", error);
-      } finally {
-        setTimeout(() => setLoading(false), 100);
-      }
-    };
-
-    loadSession();
-  }, []);
-
-  // Subscribe to auth state changes
-  useEffect(() => {
     const {
       data: { subscription },
     } = authService.onAuthStateChange(async (event, session) => {
@@ -96,12 +78,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session?.user) {
         // Skip redundant loads on token refresh — user hasn't changed
         if (event === "TOKEN_REFRESHED") return;
-        // On INITIAL_SESSION, only load if loadSession hasn't already handled it
-        if (
-          event === "INITIAL_SESSION" &&
-          studentContextUserRef.current === session.user.id
-        )
-          return;
         loadStudentContext(session.user).catch(console.error);
       } else {
         studentContextUserRef.current = null;

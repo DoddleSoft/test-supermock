@@ -28,8 +28,9 @@ export interface ScheduledTestValidation {
  */
 export async function validateScheduledTestAccess(
   attemptId: string,
+  existingClient?: Awaited<ReturnType<typeof createClient>>,
 ): Promise<ScheduledTestValidation> {
-  const supabase = await createClient();
+  const supabase = existingClient ?? (await createClient());
 
   try {
     // Get the attempt with scheduled test details

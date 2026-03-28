@@ -16,7 +16,7 @@ import {
 import { toast } from "sonner";
 import Navbar from "@/component/landing/Navbar";
 import Footer from "@/component/landing/Footer";
-import { authService } from "@/helpers/auth";
+import { useAuth } from "@/context/AuthContext";
 import { Loader } from "@/component/ui/loader";
 import {
   formatTestTime,
@@ -82,46 +82,39 @@ export default function MockTestPage() {
     StudentRegisteredTest[]
   >([]);
   const [, setTick] = useState(0);
+  const { studentEmail, studentCenterSlug, loading: authLoading } = useAuth();
 
-  // Re-evaluate test statuses every second so countdowns and "Join Now"
-  // unlock automatically without requiring a manual page refresh.
+  // Re-evaluate test statuses every 60 seconds — countdown shows minutes,
+  // so 1-second ticks caused unnecessary re-renders with zero visual change.
   useEffect(() => {
-    const interval = setInterval(() => setTick((t) => t + 1), 1000);
+    const interval = setInterval(() => setTick((t) => t + 1), 60_000);
     return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
+    if (authLoading) return; // wait for auth context
+
     let ignore = false;
 
     const validateAccess = async () => {
-      const access = await authService.getStudentAccess();
-
-      if (ignore) return;
-
-      if (!access.success || !access.allowed) {
-        if (access.error) {
-          toast.error(access.error);
-        }
-        router.push(access.redirectPath || "/auth/login");
+      // Use AuthContext instead of calling getStudentAccess (saves getUser + 2 DB queries)
+      if (!studentEmail) {
+        router.push("/auth/login");
         return;
       }
 
-      if (access.centerSlug && slug && access.centerSlug !== slug) {
-        router.replace(`/mock-test/${access.centerSlug}`);
+      if (studentCenterSlug && slug && studentCenterSlug !== slug) {
+        router.replace(`/mock-test/${studentCenterSlug}`);
         return;
       }
 
       // Fetch only the tests this student is registered for
-      if (access.userEmail) {
-        const { tests, error } = await fetchStudentRegisteredTests(
-          access.userEmail,
-        );
-        if (ignore) return;
-        if (error) {
-          toast.error(error);
-        } else {
-          setRegisteredTests(tests);
-        }
+      const { tests, error } = await fetchStudentRegisteredTests(studentEmail);
+      if (ignore) return;
+      if (error) {
+        toast.error(error);
+      } else {
+        setRegisteredTests(tests);
       }
 
       setIsLoading(false);
@@ -132,7 +125,7 @@ export default function MockTestPage() {
     return () => {
       ignore = true;
     };
-  }, [router, slug]);
+  }, [authLoading, studentEmail, studentCenterSlug, router, slug]);
 
   const handleJoinTest = (scheduledTestId: string) => {
     // Always go through exchange-code so OTP is verified and modules are created

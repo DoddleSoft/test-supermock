@@ -11,6 +11,12 @@ import { useParams } from "next/navigation";
 import { useAuth } from "./AuthContext";
 import { createClient } from "@/utils/supabase/client";
 
+export type DailyHours = {
+  open?: string;
+  close?: string;
+  closed?: boolean;
+};
+
 export interface Center {
   center_id: string;
   name: string;
@@ -20,6 +26,18 @@ export interface Center {
   user_id: string;
   created_at: string;
   updated_at: string;
+  logo_url: string | null;
+  about: string | null;
+  website_url: string | null;
+  facebook_url: string | null;
+  instagram_url: string | null;
+  linkedin_url: string | null;
+  phone: string | null;
+  address: string | null;
+  whatsapp: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  operating_hours: Record<string, DailyHours> | null;
 }
 
 export interface DashboardStats {
@@ -63,61 +81,48 @@ export function CentreProvider({ children }: { children: ReactNode }) {
   // Fetch dashboard statistics for a center
   const fetchDashboardStats = async (centerId: string) => {
     try {
-      // Fetch total students for this center
-      const { count: studentsCount, error: studentsError } = await supabase
+      // 1. Fetch student IDs for this center ONCE
+      const { data: studentRows, error: studentsError } = await supabase
         .from("student_profiles")
-        .select("student_id", { count: "exact", head: true })
+        .select("student_id")
         .eq("center_id", centerId);
 
       if (studentsError) throw studentsError;
 
-      // Fetch total papers for this center
-      const { count: papersCount, error: papersError } = await supabase
-        .from("papers")
-        .select("id", { count: "exact", head: true })
-        .eq("center_id", centerId);
+      const studentIds = (studentRows || []).map((s: any) => s.student_id);
+      const studentsCount = studentIds.length;
 
-      if (papersError) throw papersError;
+      // 2. Run remaining counts in parallel (papers + mock_attempts)
+      const [papersResult, completedResult, totalAttemptsResult] =
+        await Promise.all([
+          supabase
+            .from("papers")
+            .select("id", { count: "exact", head: true })
+            .eq("center_id", centerId),
+          studentIds.length > 0
+            ? supabase
+                .from("mock_attempts")
+                .select("id", { count: "exact", head: true })
+                .eq("status", "completed")
+                .in("student_id", studentIds)
+            : Promise.resolve({ count: 0, error: null }),
+          studentIds.length > 0
+            ? supabase
+                .from("mock_attempts")
+                .select("id", { count: "exact", head: true })
+                .in("student_id", studentIds)
+            : Promise.resolve({ count: 0, error: null }),
+        ]);
 
-      // Fetch completed tests for students in this center
-      const { count: completedTests, error: testsError } = await supabase
-        .from("mock_attempts")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "completed")
-        .in(
-          "student_id",
-          (
-            await supabase
-              .from("student_profiles")
-              .select("student_id")
-              .eq("center_id", centerId)
-          ).data?.map((s: any) => s.student_id) || [],
-        );
-
-      if (testsError) throw testsError;
-
-      // Fetch total mock attempts for students in this center
-      const { count: mockAttemptsCount, error: mockAttemptsError } =
-        await supabase
-          .from("mock_attempts")
-          .select("id", { count: "exact", head: true })
-          .in(
-            "student_id",
-            (
-              await supabase
-                .from("student_profiles")
-                .select("student_id")
-                .eq("center_id", centerId)
-            ).data?.map((s: any) => s.student_id) || [],
-          );
-
-      if (mockAttemptsError) throw mockAttemptsError;
+      if (papersResult.error) throw papersResult.error;
+      if (completedResult.error) throw completedResult.error;
+      if (totalAttemptsResult.error) throw totalAttemptsResult.error;
 
       setDashboardStats({
-        totalStudents: studentsCount || 0,
-        completedTests: completedTests || 0,
-        totalPapers: papersCount || 0,
-        totalMockTestRegistered: mockAttemptsCount || 0,
+        totalStudents: studentsCount,
+        completedTests: completedResult.count || 0,
+        totalPapers: papersResult.count || 0,
+        totalMockTestRegistered: totalAttemptsResult.count || 0,
       });
     } catch (err) {
       console.error("Error fetching dashboard stats:", err);

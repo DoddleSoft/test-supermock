@@ -25,8 +25,9 @@ export async function validateModuleAccess(
   attemptId: string,
   moduleType: "listening" | "reading" | "writing" | "speaking",
   studentEmail: string,
+  existingClient?: Awaited<ReturnType<typeof createClient>>,
 ): Promise<ModuleAccessResult> {
-  const supabase = await createClient();
+  const supabase = existingClient ?? (await createClient());
 
   try {
     // Call the RPC function

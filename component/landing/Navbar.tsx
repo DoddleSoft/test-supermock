@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { createClient } from "@/utils/supabase/client";
 import Link from "next/link";
 import { Menu, X, LogOut, User } from "lucide-react";
 import Image from "next/image";
 import { useAuth } from "@/context/AuthContext";
-import { authService } from "@/helpers/auth";
 import { toast } from "sonner";
 
 interface NavbarProps {
@@ -19,27 +19,50 @@ export default function Navbar({
 }: NavbarProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
-  const [centerSlug, setCenterSlug] = useState<string | null>(null);
-  const { user, userProfile, studentName, signOut } = useAuth();
+  const { user, userProfile, studentName, studentCenterSlug, signOut } =
+    useAuth();
+
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Check authentication and get center slug on mount
+  // Center info for whitelabeling
+  const [centerSlug, setCenterSlug] = useState<string | null>(null);
+  const [centerInfo, setCenterInfo] = useState<{
+    name: string;
+    logo_url: string | null;
+  } | null>(null);
+
   useEffect(() => {
-    const checkAccess = async () => {
-      if (user) {
-        try {
-          const access = await authService.getStudentAccess();
-          if (access.allowed && access.centerSlug) {
-            setCenterSlug(access.centerSlug);
-          }
-        } catch (error) {
-          console.error("Access check error:", error);
-        }
+    if (studentCenterSlug) {
+      setCenterSlug(studentCenterSlug);
+    }
+  }, [studentCenterSlug]);
+
+  // Fetch center info only if slug changes and not already loaded
+  useEffect(() => {
+    if (!centerSlug) {
+      setCenterInfo(null);
+      return;
+    }
+    let ignore = false;
+    const fetchCenter = async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("centers")
+        .select("name,logo_url")
+        .eq("slug", centerSlug)
+        .eq("is_active", true)
+        .single();
+      if (!ignore) {
+        setCenterInfo(
+          data ? { name: data.name, logo_url: data.logo_url } : null,
+        );
       }
     };
-
-    checkAccess();
-  }, [user]);
+    fetchCenter();
+    return () => {
+      ignore = true;
+    };
+  }, [centerSlug]);
 
   // Standard practice: Add background blur only after scrolling
   useEffect(() => {
@@ -62,7 +85,6 @@ export default function Navbar({
   const handleLogout = async () => {
     try {
       await signOut();
-      // signOut in AuthContext already handles redirect to /auth/login
     } catch (error) {
       console.error("Logout error:", error);
       toast.error("Failed to logout. Please try again.");
@@ -78,29 +100,56 @@ export default function Navbar({
       <div className="w-[95%] md:w-full md:max-w-5xl lg:max-w-7xl rounded-2xl pointer-events-auto">
         <div
           className={`relative flex items-center justify-between rounded-2xl border transition-all duration-300 
-            ${"px-4 py-3 md:px-6 md:py-4 lg:px-8"}
+            ${"px-4 py-1 md:px-6 md:py-2 lg:px-8"}
             ${
               scrolled
                 ? "bg-white/70 backdrop-blur-xl border-white/20 shadow-md"
                 : "bg-white/50 border-transparent shadow-sm"
             }`}
         >
-          {/* --- Brand --- */}
+          {/* --- Brand (Whitelabel) --- */}
           <div className="flex items-center gap-3">
-            <Image
-              src="/supermock-logo.png"
-              alt="SuperMock Logo"
-              width={40}
-              height={40}
-            />
-            <button
-              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-              className="text-xl md:text-2xl font-bold tracking-tight text-slate-900 hover:opacity-80 transition-opacity"
-            >
-              Super<span className="text-red-600">Mock</span>
-            </button>
-            <div className="h-8 bg-slate-300 w-[2px]"></div>
-            <p className="text-sm text-gray-700 font-semibold">Test Portal</p>
+            {centerInfo ? (
+              <>
+                {centerInfo.logo_url ? (
+                  <Image
+                    src={centerInfo.logo_url}
+                    alt={centerInfo.name + " logo"}
+                    width={120}
+                    height={120}
+                    className="rounded object-contain"
+                  />
+                ) : (
+                  <Image
+                    src="/supermock-logo.png"
+                    alt="SuperMock Logo"
+                    width={120}
+                    height={120}
+                  />
+                )}
+                <span className="text-lg md:text-xl tracking-tight text-slate-900">
+                  <div className="font-bold">{centerInfo.name}</div>
+                  <p className="text-xs text-gray-700">Test Portal</p>
+                </span>
+              </>
+            ) : (
+              <>
+                <Image
+                  src="/supermock-logo.png"
+                  alt="SuperMock Logo"
+                  width={60}
+                  height={60}
+                />
+                <button
+                  onClick={() =>
+                    window.scrollTo({ top: 0, behavior: "smooth" })
+                  }
+                  className="text-xl md:text-2xl font-bold tracking-tight text-slate-900 hover:opacity-80 transition-opacity"
+                >
+                  Super<span className="text-red-600">Mock</span>
+                </button>
+              </>
+            )}
           </div>
 
           {!hideInstructions && (

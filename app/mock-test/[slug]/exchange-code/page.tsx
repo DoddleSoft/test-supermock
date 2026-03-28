@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter, useSearchParams, useParams } from "next/navigation";
 import { Loader2, RectangleEllipsis } from "lucide-react";
 import { joinMockTest } from "@/helpers/scheduledTests";
-import { authService } from "@/helpers/auth";
+import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
 export default function JoinCenterPage() {
@@ -12,29 +12,23 @@ export default function JoinCenterPage() {
   const [digits, setDigits] = useState<string[]>(Array(6).fill(""));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
-  const [userEmail, setUserEmail] = useState("");
 
   const router = useRouter();
   const searchParams = useSearchParams();
   const { slug } = useParams<{ slug: string }>();
   const testId = searchParams.get("test");
+  const { studentEmail, loading: authLoading } = useAuth();
 
   // Refs to manage focus for each input
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  // Get user email on mount
+  // Redirect to login if no email once auth is ready
   useEffect(() => {
-    const getUserEmail = async () => {
-      const access = await authService.getStudentAccess();
-      if (!access.success || !access.userEmail) {
-        toast.error("Please log in to continue");
-        router.push("/auth/login");
-        return;
-      }
-      setUserEmail(access.userEmail);
-    };
-    getUserEmail();
-  }, [router]);
+    if (!authLoading && !studentEmail) {
+      toast.error("Please log in to continue");
+      router.push("/auth/login");
+    }
+  }, [authLoading, studentEmail, router]);
 
   // Focus the first input on mount
   useEffect(() => {
@@ -57,7 +51,7 @@ export default function JoinCenterPage() {
       return;
     }
 
-    if (!userEmail) {
+    if (!studentEmail) {
       setError("User email not found. Please refresh and try again.");
       return;
     }
@@ -66,7 +60,7 @@ export default function JoinCenterPage() {
     setError("");
 
     try {
-      const result = await joinMockTest(fullCode, testId, userEmail);
+      const result = await joinMockTest(fullCode, testId, studentEmail);
 
       if (!result.success) {
         setError(result.error || "Failed to join test");

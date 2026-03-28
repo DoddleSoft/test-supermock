@@ -13,8 +13,14 @@ interface ListeningPageProps {
 export default async function ListeningPage({ params }: ListeningPageProps) {
   const { slug, id } = await params;
 
+  // Single server client + single auth call for ALL validations
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   // CRITICAL SECURITY CHECK: Validate scheduled test access
-  const validation = await validateScheduledTestAccess(id);
+  const validation = await validateScheduledTestAccess(id, supabase);
 
   if (!validation.isValid) {
     return (
@@ -27,12 +33,6 @@ export default async function ListeningPage({ params }: ListeningPageProps) {
     );
   }
 
-  // CRITICAL SECURITY CHECK: Validate module-specific access
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
   if (!user?.email) {
     return (
       <TestExpiredScreen
@@ -42,7 +42,13 @@ export default async function ListeningPage({ params }: ListeningPageProps) {
     );
   }
 
-  const moduleAccess = await validateModuleAccess(id, "listening", user.email);
+  // CRITICAL SECURITY CHECK: Validate module-specific access (reuse client)
+  const moduleAccess = await validateModuleAccess(
+    id,
+    "listening",
+    user.email,
+    supabase,
+  );
 
   if (!moduleAccess.allowed) {
     return (
@@ -55,7 +61,17 @@ export default async function ListeningPage({ params }: ListeningPageProps) {
     );
   }
 
-  const examData = await loadExamData(id);
+  // Load exam data — skip redundant validation, reuse client
+  const studentProfile = await supabase
+    .from("student_profiles")
+    .select("student_id")
+    .eq("email", user.email)
+    .maybeSingle();
+
+  const examData = await loadExamData(id, {
+    studentId: studentProfile.data?.student_id,
+    supabaseClient: supabase,
+  });
 
   if (!examData.success || !examData.data) {
     return (
